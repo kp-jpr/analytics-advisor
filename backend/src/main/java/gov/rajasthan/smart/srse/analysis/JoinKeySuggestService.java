@@ -5,6 +5,7 @@ import gov.rajasthan.smart.srse.compiler.SqlTypeFamily;
 import gov.rajasthan.smart.srse.compiler.TypeCoercion;
 import gov.rajasthan.smart.srse.execution.AnalysisExecutionRouter;
 import gov.rajasthan.smart.srse.execution.GuardrailProperties;
+import gov.rajasthan.smart.srse.execution.ScopedJdbc;
 import gov.rajasthan.smart.srse.lakehouse.AnalysisScopeFromService;
 import gov.rajasthan.smart.srse.lakehouse.LakehouseRegistryService;
 import gov.rajasthan.smart.srse.lakehouse.LakehouseRegistryService.RegisteredColumn;
@@ -368,11 +369,11 @@ public class JoinKeySuggestService {
         }
         ScopeFilteredFrom sourceScope = scopeFrom.planFrom(source);
         String sql = buildSourceDistinctnessSql(sourceScope, columnNames);
-        jdbc.setQueryTimeout(analysisProperties.joinKeyDistinctnessTimeoutSeconds());
+        JdbcTemplate timed = ScopedJdbc.withTimeout(jdbc, analysisProperties.joinKeyDistinctnessTimeoutSeconds());
         RowMapper<Map<String, Double>> mapper = (rs, rowNum) -> readDistinctnessRow(rs, columnNames);
         List<Map<String, Double>> rows = sourceScope.appliesFilter()
-                ? jdbc.query(sql, sourceScope.bindValues().toArray(), mapper)
-                : jdbc.query(sql, mapper);
+                ? timed.query(sql, sourceScope.bindValues().toArray(), mapper)
+                : timed.query(sql, mapper);
         return rows.isEmpty() ? Map.of() : rows.get(0);
     }
 
@@ -407,7 +408,6 @@ public class JoinKeySuggestService {
 
     private void applyProbeOverlaps(QualifiedTable source, QualifiedTable target, List<ScoredPair> ranked) {
         int limit = Math.min(analysisProperties.maxProbedPairs(), ranked.size());
-        jdbc.setQueryTimeout(guardrails.queryTimeoutSeconds());
         for (int i = 0; i < limit; i++) {
             ScoredPair pair = ranked.get(i);
             Double ratio = probeOverlap(source, target, pair);
@@ -439,9 +439,10 @@ public class JoinKeySuggestService {
         if (targetScope.appliesFilter()) {
             params.addAll(targetScope.bindValues());
         }
+        JdbcTemplate timed = ScopedJdbc.withTimeout(jdbc, guardrails.queryTimeoutSeconds());
         Double ratio = params.isEmpty()
-                ? jdbc.queryForObject(sql, Double.class)
-                : jdbc.queryForObject(sql, params.toArray(), Double.class);
+                ? timed.queryForObject(sql, Double.class)
+                : timed.queryForObject(sql, params.toArray(), Double.class);
         if (ratio == null || ratio.isNaN()) {
             return null;
         }

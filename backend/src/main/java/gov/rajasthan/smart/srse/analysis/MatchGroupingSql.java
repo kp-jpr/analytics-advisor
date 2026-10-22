@@ -1,7 +1,6 @@
 package gov.rajasthan.smart.srse.analysis;
 
 import gov.rajasthan.smart.srse.compiler.SqlTypeFamily;
-import gov.rajasthan.smart.srse.lakehouse.LakehouseRegistryService;
 import gov.rajasthan.smart.srse.lakehouse.LakehouseRegistryService.RegisteredColumn;
 import gov.rajasthan.smart.srse.lakehouse.QualifiedTable;
 
@@ -46,7 +45,8 @@ final class MatchGroupingSql {
             RecordMatchRequest req,
             QualifiedTable sourceTable,
             QualifiedTable targetTable,
-            LakehouseRegistryService registry) {
+            Map<String, RegisteredColumn> sourceColumns,
+            Map<String, RegisteredColumn> targetColumns) {
         List<DisplayColumn> all = new ArrayList<>();
         all.addAll(req.groupByColumns());
         for (AggregateSpec agg : req.aggregates()) {
@@ -60,17 +60,36 @@ final class MatchGroupingSql {
                 throw new IllegalArgumentException(
                         "Grouping column must be on source or target table: " + table.qualifiedName());
             }
-            registry.validateColumn(col.qualifiedColumn());
         }
         for (AggregateSpec agg : req.aggregates()) {
             if (agg.column() == null) {
                 continue;
             }
-            RegisteredColumn described = registry.describeColumns(
-                    agg.column().qualifiedTable(), List.of(agg.column().column()))
-                    .get(agg.column().column());
+            RegisteredColumn described = columnOn(
+                    agg.column(), sourceTable, targetTable, sourceColumns, targetColumns);
             validateAggregateType(agg, described);
         }
+    }
+
+    private static RegisteredColumn columnOn(
+            DisplayColumn column,
+            QualifiedTable sourceTable,
+            QualifiedTable targetTable,
+            Map<String, RegisteredColumn> sourceColumns,
+            Map<String, RegisteredColumn> targetColumns) {
+        Map<String, RegisteredColumn> side = column.qualifiedTable().equals(sourceTable)
+                ? sourceColumns
+                : targetColumns;
+        if (!column.qualifiedTable().equals(sourceTable) && !column.qualifiedTable().equals(targetTable)) {
+            throw new IllegalArgumentException(
+                    "Grouping column must be on source or target table: " + column.qualifiedTable().qualifiedName());
+        }
+        RegisteredColumn described = side.get(column.column());
+        if (described == null) {
+            throw new IllegalArgumentException(
+                    "Unknown or hidden column: " + column.qualifiedTable().qualifiedName() + "." + column.column());
+        }
+        return described;
     }
 
     static void validateAggregateType(AggregateSpec agg, RegisteredColumn described) {
@@ -99,7 +118,11 @@ final class MatchGroupingSql {
      * Keyed by fully qualified column name.
      */
     static Map<String, SqlTypeFamily> aggregateColumnTypes(
-            RecordMatchRequest req, LakehouseRegistryService registry) {
+            RecordMatchRequest req,
+            QualifiedTable sourceTable,
+            QualifiedTable targetTable,
+            Map<String, RegisteredColumn> sourceColumns,
+            Map<String, RegisteredColumn> targetColumns) {
         Map<String, SqlTypeFamily> types = new java.util.HashMap<>();
         for (AggregateSpec agg : req.aggregates()) {
             if (agg.column() == null) {
@@ -109,10 +132,9 @@ final class MatchGroupingSql {
             if (types.containsKey(key)) {
                 continue;
             }
-            RegisteredColumn described = registry.describeColumns(
-                    agg.column().qualifiedTable(), List.of(agg.column().column()))
-                    .get(agg.column().column());
-            types.put(key, described == null ? SqlTypeFamily.UNKNOWN : SqlTypeFamily.of(described.dataType()));
+            RegisteredColumn described = columnOn(
+                    agg.column(), sourceTable, targetTable, sourceColumns, targetColumns);
+            types.put(key, SqlTypeFamily.of(described.dataType()));
         }
         return types;
     }
@@ -259,8 +281,9 @@ final class MatchGroupingSql {
 
     /** Single-table grouped extract: target table equals source. */
     static void validateSingleSourceGrouped(RecordMatchRequest req, QualifiedTable table,
-                                            LakehouseRegistryService registry, int maxKeys, int maxAggregates) {
+                                            Map<String, RegisteredColumn> columns,
+                                            int maxKeys, int maxAggregates) {
         validateGroupedRequest(req, maxKeys, maxAggregates);
-        validateColumnsOnSides(req, table, table, registry);
+        validateColumnsOnSides(req, table, table, columns, columns);
     }
 }

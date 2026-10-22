@@ -351,28 +351,28 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
       setSqlPreviewError(null);
       return undefined;
     }
-    let cancelled = false;
+    const controller = new AbortController();
     const timer = setTimeout(() => {
       const req = buildExtractRequest(dualMode, extract);
-      if (!req || cancelled) return;
+      if (!req || controller.signal.aborted) return;
       setSqlPreviewLoading(true);
       setSqlPreviewError(null);
-      fetchMatchSql(req)
+      fetchMatchSql(req, controller.signal)
         .then((sql) => {
-          if (!cancelled) setSqlPreview(sql);
+          if (!controller.signal.aborted) setSqlPreview(sql);
         })
         .catch((err: unknown) => {
-          if (!cancelled) {
-            setSqlPreview(null);
-            setSqlPreviewError(err instanceof Error ? err.message : String(err));
-          }
+          if (controller.signal.aborted) return;
+          if (err instanceof DOMException && err.name === "AbortError") return;
+          setSqlPreview(null);
+          setSqlPreviewError(err instanceof Error ? err.message : String(err));
         })
         .finally(() => {
-          if (!cancelled) setSqlPreviewLoading(false);
+          if (!controller.signal.aborted) setSqlPreviewLoading(false);
         });
-    }, 400);
+    }, 1000);
     return () => {
-      cancelled = true;
+      controller.abort();
       clearTimeout(timer);
     };
   }, [dualMode, extract, requestReady]);
@@ -736,7 +736,7 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
               checked={countOnly}
               onChange={(e) => patchExtract({ countOnly: e.target.checked })}
             />
-            {t("lblCountOnly")}
+            Count records only (no row preview)
           </label>
         </div>
       </section>

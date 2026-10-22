@@ -10,6 +10,8 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Component;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
@@ -22,6 +24,8 @@ import java.util.List;
 @ConditionalOnBean(SessionTokenService.class)
 @ConditionalOnExpression("'${srse.auth-mode:mock}' == 'mock' || '${srse.auth-mode:mock}' == 'local'")
 public class SessionBearerAuthenticationFilter extends OncePerRequestFilter {
+
+    private static final Logger log = LoggerFactory.getLogger(SessionBearerAuthenticationFilter.class);
 
     private final SessionTokenService sessionTokenService;
 
@@ -48,8 +52,11 @@ public class SessionBearerAuthenticationFilter extends OncePerRequestFilter {
                         parsed.username(), null, granted);
                 authentication.setDetails(parsed);
                 SecurityContextHolder.getContext().setAuthentication(authentication);
+            } catch (io.jsonwebtoken.JwtException | IllegalArgumentException ex) {
+                // expired, malformed, or bad signature — stay anonymous
             } catch (RuntimeException ex) {
-                // leave unauthenticated
+                log.warn("Unexpected failure parsing bearer token for {}: {}",
+                        request.getRequestURI(), ex.toString());
             }
         }
         filterChain.doFilter(request, response);

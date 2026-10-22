@@ -9,6 +9,7 @@ import gov.rajasthan.smart.srse.lakehouse.ScopeFilteredFrom;
 import gov.rajasthan.smart.srse.execution.AnalysisExecutionRoute;
 import gov.rajasthan.smart.srse.execution.AnalysisExecutionRouter;
 import gov.rajasthan.smart.srse.execution.GuardrailProperties;
+import gov.rajasthan.smart.srse.execution.ScopedJdbc;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -104,8 +105,9 @@ public class ColumnDistinctValuesService {
         if (!planned.executes()) {
             return new ColumnValuesResponse(List.of(), false, false);
         }
-        JdbcTemplate executionJdbc = executionRouter == null ? jdbc : executionRouter.jdbc(planned.route());
-        executionJdbc.setQueryTimeout(guardrails.queryTimeoutSeconds());
+        JdbcTemplate executionJdbc = ScopedJdbc.withTimeout(
+                executionRouter == null ? jdbc : executionRouter.jdbc(planned.route()),
+                guardrails.queryTimeoutSeconds());
         List<Object> raw = executionJdbc.query(
                 planned.routedSql(),
                 planned.params().toArray(),

@@ -234,7 +234,7 @@ class RecordMatchControllerTest {
         };
         when(analysisAuditService.planMultiMatchAudited(any())).thenReturn(new AuditedMultiMatch(
                 new QueryExecutionTicket("multi-id", ActiveQueryKind.MULTI_MATCH, "c.s.t", 1L, "tester", "BYPASS", true)));
-        when(multiMatchService.matchMulti(any(), any())).thenReturn(body);
+        when(multiMatchService.matchMulti(any(), any(), any())).thenReturn(body);
 
         String bodyJson = """
                 {"hubCriteria":[{"catalog":"c","schema":"s","table":"golden","column":"id","fuzzyThresholdPercent":null}],

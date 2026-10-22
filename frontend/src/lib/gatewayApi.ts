@@ -1,3 +1,4 @@
+import { readApiErrorMessage } from "@/lib/apiError";
 import { authorizedFetch } from "@/lib/authToken";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8080";
@@ -49,7 +50,7 @@ async function adminJson<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
   if (!res.ok) {
-    throw new Error(await res.text());
+    throw new Error(await readApiErrorMessage(res));
   }
   return res.json() as Promise<T>;
 }

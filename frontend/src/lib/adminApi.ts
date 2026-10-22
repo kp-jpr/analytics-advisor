@@ -1,3 +1,4 @@
+import { readApiErrorMessage } from "@/lib/apiError";
 import {
   authorizedFetch as scopedAuthorizedFetch,
   type AuthScope,
@@ -43,7 +44,7 @@ export type UpdateConnectionResponse = {
 export async function getConnections(): Promise<ConnectionsInfo> {
   const res = await authorizedFetch(`${API_BASE}/api/admin/connections`, { credentials: "include" }, "admin");
   if (!res.ok) {
-    throw new Error(`Admin service error ${res.status}: ${await res.text()}`);
+    throw new Error(`Admin service error ${res.status}: ${await readApiErrorMessage(res)}`);
   }
   return res.json();
 }
@@ -59,7 +60,7 @@ async function updateConnection(
     body: JSON.stringify(req),
   }, "admin");
   if (!res.ok) {
-    throw new Error(`Connection update error ${res.status}: ${await res.text()}`);
+    throw new Error(`Connection update error ${res.status}: ${await readApiErrorMessage(res)}`);
   }
   return res.json();
 }
@@ -108,7 +109,7 @@ export type TableScopeConfig = {
 async function adminGet<T>(path: string): Promise<T> {
   const res = await authorizedFetch(`${API_BASE}${path}`, { credentials: "include" }, "admin");
   if (!res.ok) {
-    throw new Error(`Admin service error ${res.status}: ${await res.text()}`);
+    throw new Error(`Admin service error ${res.status}: ${await readApiErrorMessage(res)}`);
   }
   return res.json() as Promise<T>;
 }
@@ -164,7 +165,7 @@ export async function renameSourceSystemLabel(from: string, to: string): Promise
     body: JSON.stringify({ from, to }),
   }, "admin");
   if (!res.ok) {
-    throw new Error(`Admin service error ${res.status}: ${await res.text()}`);
+    throw new Error(`Admin service error ${res.status}: ${await readApiErrorMessage(res)}`);
   }
   return res.json();
 }
@@ -177,7 +178,7 @@ export async function renameTableGroupLabel(from: string, to: string): Promise<{
     body: JSON.stringify({ from, to }),
   }, "admin");
   if (!res.ok) {
-    throw new Error(`Admin service error ${res.status}: ${await res.text()}`);
+    throw new Error(`Admin service error ${res.status}: ${await readApiErrorMessage(res)}`);
   }
   return res.json();
 }
@@ -197,7 +198,7 @@ export async function registerTable(req: {
     body: JSON.stringify(req),
   }, "admin");
   if (!res.ok) {
-    throw new Error(`Admin service error ${res.status}: ${await res.text()}`);
+    throw new Error(`Admin service error ${res.status}: ${await readApiErrorMessage(res)}`);
   }
   return res.json();
 }
@@ -213,7 +214,7 @@ export async function updateTableRegistration(
     body: JSON.stringify(tags),
   }, "admin");
   if (!res.ok) {
-    throw new Error(`Admin service error ${res.status}: ${await res.text()}`);
+    throw new Error(`Admin service error ${res.status}: ${await readApiErrorMessage(res)}`);
   }
   return res.json();
 }
@@ -224,7 +225,7 @@ export async function unregisterTable(id: number): Promise<void> {
     credentials: "include",
   }, "admin");
   if (!res.ok) {
-    throw new Error(`Admin service error ${res.status}: ${await res.text()}`);
+    throw new Error(`Admin service error ${res.status}: ${await readApiErrorMessage(res)}`);
   }
 }
 
@@ -247,7 +248,7 @@ export async function replaceTableScopeConfig(
     body: JSON.stringify(body),
   }, "admin");
   if (!res.ok) {
-    throw new Error(`Admin service error ${res.status}: ${await res.text()}`);
+    throw new Error(`Admin service error ${res.status}: ${await readApiErrorMessage(res)}`);
   }
   return res.json();
 }
@@ -305,7 +306,7 @@ export async function exportAdminConfig(): Promise<AdminConfigBundle> {
     credentials: "include",
   }, "admin");
   if (!res.ok) {
-    throw new Error(`Admin config export failed ${res.status}: ${await res.text()}`);
+    throw new Error(`Admin config export failed ${res.status}: ${await readApiErrorMessage(res)}`);
   }
   return res.json();
 }
@@ -336,7 +337,7 @@ export async function startMetadataSync(): Promise<MetadataSyncStartResponse> {
     credentials: "include",
   }, "admin");
   if (!res.ok) {
-    throw new Error(`Metadata sync failed ${res.status}: ${await res.text()}`);
+    throw new Error(`Metadata sync failed ${res.status}: ${await readApiErrorMessage(res)}`);
   }
   return res.json();
 }
@@ -346,7 +347,7 @@ export async function getMetadataSyncStatus(): Promise<MetadataSyncRunStatus> {
     credentials: "include",
   }, "admin");
   if (!res.ok) {
-    throw new Error(`Metadata status failed ${res.status}: ${await res.text()}`);
+    throw new Error(`Metadata status failed ${res.status}: ${await readApiErrorMessage(res)}`);
   }
   return res.json();
 }
@@ -372,7 +373,7 @@ export async function getActiveQueries(): Promise<ActiveQueriesResponse> {
     credentials: "include",
   }, "admin");
   if (!res.ok) {
-    throw new Error(`Active queries failed ${res.status}: ${await res.text()}`);
+    throw new Error(`Active queries failed ${res.status}: ${await readApiErrorMessage(res)}`);
   }
   return res.json();
 }
@@ -382,7 +383,7 @@ export async function downloadMetadataManifest(): Promise<string> {
     credentials: "include",
   }, "admin");
   if (!res.ok) {
-    throw new Error(`Metadata manifest failed ${res.status}: ${await res.text()}`);
+    throw new Error(`Metadata manifest failed ${res.status}: ${await readApiErrorMessage(res)}`);
   }
   return res.text();
 }
@@ -403,7 +404,7 @@ export async function importAdminConfig(
     "admin",
   );
   if (!res.ok) {
-    throw new Error(`Admin config import failed ${res.status}: ${await res.text()}`);
+    throw new Error(`Admin config import failed ${res.status}: ${await readApiErrorMessage(res)}`);
   }
   return res.json();
 }

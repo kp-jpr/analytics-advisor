@@ -126,7 +126,7 @@ class RecordMatchExtractRulesTest {
     void hiddenColumnRefusedBeforeCompile() {
         QualifiedColumn hidden = col("secret_col");
         doThrow(new IllegalArgumentException("hidden"))
-                .when(registry).validateColumn(hidden);
+                .when(registry).describeColumns(any(), any());
         Ast.PredicateSpec rules = new Ast.PredicateSpec(
                 new Ast.PredicateNode(hidden, Ast.Operator.EQ, "x"));
         assertThrows(IllegalArgumentException.class, () -> matchService.planMatch(joinRequest(JoinType.INNER, rules, null)));

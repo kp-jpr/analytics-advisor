@@ -1,3 +1,4 @@
+import { readApiErrorMessage } from "@/lib/apiError";
 import { authorizedFetch } from "@/lib/authToken";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8080";
@@ -84,7 +85,7 @@ async function adminRequest<T>(path: string, init: RequestInit = {}): Promise<T>
     ...init,
   });
   if (!response.ok) {
-    const message = await response.text();
+    const message = await readApiErrorMessage(response);
     throw new Error(message || `Data-source service error ${response.status}`);
   }
   if (response.status === 204) return undefined as T;

@@ -12,6 +12,8 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.StringJoiner;
 import java.util.UUID;
 
@@ -73,10 +75,12 @@ public class AnalysisAuditService {
         QueryExecutionTicket ticket = newTicket(ActiveQueryKind.MULTI_MATCH, QueryShapeAudit.targetTablesFrom(req));
         try {
             StringJoiner shapes = new StringJoiner("\n---\n");
+            List<RecordMatchService.MatchQuery> queries = new ArrayList<>();
             if (req.targets() != null) {
                 for (TargetMatchSpec target : req.targets()) {
                     RecordMatchService.MatchQuery query =
                             matchService.planMatch(MultiTargetRecordMatchService.toSingleMatch(req, target));
+                    queries.add(query);
                     shapes.add(query.sql());
                 }
             }
@@ -89,7 +93,7 @@ public class AnalysisAuditService {
                     ticket.qualifiedTables(),
                     QueryShapeAudit.queryShapeFromSql(shapes.toString()),
                     ticket.scopeSummary()));
-            return new AuditedMultiMatch(ticket);
+            return new AuditedMultiMatch(ticket, List.copyOf(queries));
         } catch (RuntimeException ex) {
             auditCapture.recordBestEffort(new AuditEventDraft(
                     AuditActionType.QUERY_REFUSED,

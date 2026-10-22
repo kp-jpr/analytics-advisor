@@ -37,30 +37,32 @@ export function RuleColumnValuePicker({ table, column, selectedValues, onChange 
     if (!column) {
       return undefined;
     }
-    let cancelled = false;
-    fetchColumnDistinctValues(table, column, search.trim() || undefined)
-      .then((res) => {
-        if (!cancelled) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      fetchColumnDistinctValues(table, column, search.trim() || undefined, controller.signal)
+        .then((res) => {
+          if (controller.signal.aborted) return;
           setFetchState({
             key: pickerKey,
             values: res.values,
             truncated: res.truncated,
             error: null,
           });
-        }
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
+        })
+        .catch((err: unknown) => {
+          if (controller.signal.aborted) return;
+          if (err instanceof DOMException && err.name === "AbortError") return;
           setFetchState({
             key: pickerKey,
             values: [],
             truncated: false,
             error: err instanceof Error ? err.message : String(err),
           });
-        }
-      });
+        });
+    }, 300);
     return () => {
-      cancelled = true;
+      controller.abort();
+      clearTimeout(timer);
     };
   }, [table, column, pickerKey, search]);
 

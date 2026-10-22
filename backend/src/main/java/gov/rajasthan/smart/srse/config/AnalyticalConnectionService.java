@@ -1,5 +1,6 @@
 package gov.rajasthan.smart.srse.config;
 
+import gov.rajasthan.smart.srse.lakehouse.LakehouseBrowseService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -20,21 +21,33 @@ public class AnalyticalConnectionService {
     private final ConnectionOverrideStore overrideStore;
     private final ConnectionPoolFactory poolFactory;
     private final ConnectionProbe connectionProbe;
+    private final LakehouseBrowseService browse;
 
     @Autowired
     public AnalyticalConnectionService(SwappableDataSource analyticalDataSource,
-                                       ConnectionOverrideStore overrideStore) {
+                                       ConnectionOverrideStore overrideStore,
+                                       LakehouseBrowseService browse) {
         this(analyticalDataSource, overrideStore, AnalyticalDataSourceConfig::buildPool,
-                ds -> new JdbcTemplate(ds).queryForObject("SELECT 1", Integer.class));
+                ds -> new JdbcTemplate(ds).queryForObject("SELECT 1", Integer.class),
+                browse);
     }
 
     /** Package-private: lets tests substitute a fake pool + probe instead of hitting real Presto. */
     AnalyticalConnectionService(SwappableDataSource analyticalDataSource, ConnectionOverrideStore overrideStore,
                                 ConnectionPoolFactory poolFactory, ConnectionProbe connectionProbe) {
+        this(analyticalDataSource, overrideStore, poolFactory, connectionProbe, null);
+    }
+
+    private AnalyticalConnectionService(SwappableDataSource analyticalDataSource,
+                                        ConnectionOverrideStore overrideStore,
+                                        ConnectionPoolFactory poolFactory,
+                                        ConnectionProbe connectionProbe,
+                                        LakehouseBrowseService browse) {
         this.dataSource = analyticalDataSource;
         this.overrideStore = overrideStore;
         this.poolFactory = poolFactory;
         this.connectionProbe = connectionProbe;
+        this.browse = browse;
     }
 
     public void update(String jdbcUrl, String username, String password, String driverClassName) {
@@ -49,12 +62,15 @@ public class AnalyticalConnectionService {
             connectionProbe.probe(candidate);
         } catch (Exception e) {
             closeQuietly(candidate);
-            throw new ConnectionTestFailedException("analytical", e.getMessage());
+            throw new ConnectionTestFailedException("analytical", e.getMessage(), e);
         }
 
         DataSource previous = dataSource.getDelegate();
         dataSource.swap(candidate);
         closeQuietly(previous);
+        if (browse != null) {
+            browse.invalidateMetadata();
+        }
 
         Properties props = new Properties();
         props.setProperty("analytical.jdbc-url", jdbcUrl);

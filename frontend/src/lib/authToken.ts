@@ -1,3 +1,5 @@
+import { readApiErrorMessage } from "@/lib/apiError";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8080";
 const AUTH_MODE = process.env.NEXT_PUBLIC_AUTH_MODE ?? "mock";
 
@@ -77,7 +79,7 @@ export function getAuthToken(scope: AuthScope = "officer"): Promise<string> {
     cached = fetch(loginUrl, { method: "POST" })
       .then(async (res) => {
         if (!res.ok) {
-          throw new Error(`Mock login failed ${res.status}: ${await res.text()}`);
+          throw new Error(`Mock login failed ${res.status}: ${await readApiErrorMessage(res)}`);
         }
         const body = (await res.json()) as { token: string };
         return body.token;
@@ -105,7 +107,7 @@ export async function switchActiveRole(role: string): Promise<void> {
     body: JSON.stringify({ role }),
   });
   if (!res.ok) {
-    throw new Error(`Switch role failed ${res.status}: ${await res.text()}`);
+    throw new Error(`Switch role failed ${res.status}: ${await readApiErrorMessage(res)}`);
   }
   const body = (await res.json()) as { token?: string | null };
   if (!body.token) {

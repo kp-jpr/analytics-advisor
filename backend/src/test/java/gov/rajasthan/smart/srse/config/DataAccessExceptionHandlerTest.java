@@ -4,6 +4,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+
+import java.io.IOException;
 import org.springframework.jdbc.UncategorizedSQLException;
 
 import java.net.ConnectException;
@@ -31,21 +33,21 @@ class DataAccessExceptionHandlerTest {
     void prestoDroppedConnectionIsServiceUnavailable() {
         SQLException sql = new SQLException("Error executing query", null, 0,
                 new SocketException("Socket closed"));
-        ResponseEntity<String> res = handler.dataAccessFailure(
+        ResponseEntity<ApiError> res = handler.dataAccessFailure(
                 new UncategorizedSQLException("StatementCallback", "SELECT COUNT(*) FROM beneficiary", sql));
 
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE, res.getStatusCode());
-        assertTrue(res.getBody().contains("Lakehouse connection unavailable"), res.getBody());
-        assertTrue(res.getBody().contains("Socket closed"), res.getBody());
+        assertTrue(res.getBody().message().contains("Lakehouse connection unavailable"), res.getBody().message());
+        assertTrue(res.getBody().message().contains("Socket closed"), res.getBody().message());
     }
 
     @Test
     void refusedConnectionIsServiceUnavailable() {
-        ResponseEntity<String> res = handler.dataAccessFailure(
+        ResponseEntity<ApiError> res = handler.dataAccessFailure(
                 new DataAccessResourceFailureException("pool down", new ConnectException("Connection refused")));
 
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE, res.getStatusCode());
-        assertTrue(res.getBody().contains("Connection refused"), res.getBody());
+        assertTrue(res.getBody().message().contains("Connection refused"), res.getBody().message());
     }
 
     /**
@@ -56,22 +58,22 @@ class DataAccessExceptionHandlerTest {
     @Test
     void rejectedQueryStays500ButCarriesTheRealMessage() {
         SQLException sql = new SQLException("line 1:8: Column 'bogus' cannot be resolved");
-        ResponseEntity<String> res = handler.dataAccessFailure(
+        ResponseEntity<ApiError> res = handler.dataAccessFailure(
                 new UncategorizedSQLException("StatementCallback", "SELECT bogus FROM beneficiary", sql));
 
         assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, res.getStatusCode());
-        assertTrue(res.getBody().contains("cannot be resolved"), res.getBody());
-        assertFalse(res.getBody().contains("Lakehouse connection unavailable"), res.getBody());
+        assertTrue(res.getBody().message().contains("cannot be resolved"), res.getBody().message());
+        assertFalse(res.getBody().message().contains("Lakehouse connection unavailable"), res.getBody().message());
     }
 
     /** A null message must not surface as the string "null". */
     @Test
     void fallsBackToTheExceptionTypeWhenThereIsNoMessage() {
-        ResponseEntity<String> res = handler.dataAccessFailure(
+        ResponseEntity<ApiError> res = handler.dataAccessFailure(
                 new DataAccessResourceFailureException(null, new SocketException()));
 
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE, res.getStatusCode());
-        assertTrue(res.getBody().contains("SocketException"), res.getBody());
+        assertTrue(res.getBody().message().contains("SocketException"), res.getBody().message());
     }
 
     /**
@@ -86,7 +88,7 @@ class DataAccessExceptionHandlerTest {
         SQLException b = new SQLException("second", a);
         a.initCause(b);   // a -> b -> a
 
-        ResponseEntity<String> res =
+        ResponseEntity<ApiError> res =
                 assertTimeoutPreemptively(Duration.ofSeconds(5),
                         () -> handler.dataAccessFailure(
                                 new UncategorizedSQLException("task", "SELECT 1", a)));
@@ -103,24 +105,24 @@ class DataAccessExceptionHandlerTest {
     @Test
     void queryFailureIncludesTheFailingSqlSoItCanBeDiagnosed() {
         String sql = "SELECT COUNT(*) FROM gold.beneficiary WHERE (gold.beneficiary.gender IN (?))";
-        ResponseEntity<String> res = handler.dataAccessFailure(new UncategorizedSQLException(
+        ResponseEntity<ApiError> res = handler.dataAccessFailure(new UncategorizedSQLException(
                 "StatementCallback", sql, new SQLException("User defined type is not supported")));
 
         assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, res.getStatusCode());
-        assertTrue(res.getBody().contains("User defined type is not supported"), res.getBody());
-        assertTrue(res.getBody().contains("gold.beneficiary"), res.getBody());
-        assertTrue(res.getBody().contains("failing query"), res.getBody());
+        assertTrue(res.getBody().message().contains("User defined type is not supported"), res.getBody().message());
+        assertTrue(res.getBody().message().contains("gold.beneficiary"), res.getBody().message());
+        assertTrue(res.getBody().message().contains("failing query"), res.getBody().message());
     }
 
     /** Officer values are bound, so the echoed SQL exposes identifiers only — never data. */
     @Test
     void echoedSqlContainsPlaceholdersNotBoundValues() {
         String sql = "SELECT COUNT(*) FROM t WHERE t.gender IN (?) AND t.age BETWEEN ? AND ?";
-        ResponseEntity<String> res = handler.dataAccessFailure(new UncategorizedSQLException(
+        ResponseEntity<ApiError> res = handler.dataAccessFailure(new UncategorizedSQLException(
                 "StatementCallback", sql, new SQLException("boom")));
 
-        assertTrue(res.getBody().contains("IN (?)"), res.getBody());
-        assertFalse(res.getBody().contains("FEMALE"), res.getBody());
+        assertTrue(res.getBody().message().contains("IN (?)"), res.getBody().message());
+        assertFalse(res.getBody().message().contains("FEMALE"), res.getBody().message());
     }
 
     /** An outage must not be buried under a SQL dump — connectivity wins. */
@@ -128,10 +130,32 @@ class DataAccessExceptionHandlerTest {
     void connectivityFailureDoesNotAppendSql() {
         SQLException sql = new SQLException("Error executing query", null, 0,
                 new SocketException("Socket closed"));
-        ResponseEntity<String> res = handler.dataAccessFailure(
+        ResponseEntity<ApiError> res = handler.dataAccessFailure(
                 new UncategorizedSQLException("cb", "SELECT COUNT(*) FROM t", sql));
 
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE, res.getStatusCode());
-        assertFalse(res.getBody().contains("failing query"), res.getBody());
+        assertFalse(res.getBody().message().contains("failing query"), res.getBody().message());
+    }
+
+    @Test
+    void plainIoExceptionIsAQueryFailureNotAnOutage() {
+        SQLException sql = new SQLException("wrapped", new IOException("disk quota exceeded"));
+        ResponseEntity<ApiError> res = handler.dataAccessFailure(
+                new UncategorizedSQLException("cb", "SELECT 1", sql));
+
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, res.getStatusCode());
+        assertEquals("QUERY_FAILED", res.getBody().code());
+        assertTrue(res.getBody().message().contains("disk quota exceeded"), res.getBody().message());
+    }
+
+    @Test
+    void transportIoExceptionStaysUnavailable() {
+        SQLException sql = new SQLException("wrapped", new IOException("Connection reset"));
+        ResponseEntity<ApiError> res = handler.dataAccessFailure(
+                new UncategorizedSQLException("cb", "SELECT 1", sql));
+
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, res.getStatusCode());
+        assertEquals("LAKEHOUSE_UNAVAILABLE", res.getBody().code());
+        assertTrue(res.getBody().requestId() != null && !res.getBody().requestId().isBlank());
     }
 }

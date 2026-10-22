@@ -1,3 +1,4 @@
+import { readApiErrorMessage } from "@/lib/apiError";
 import { authorizedFetch } from "@/lib/authToken";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8080";
@@ -56,7 +57,7 @@ function queryString(params: AuditListParams): string {
 export async function fetchAuditPage(params: AuditListParams): Promise<AuditPage> {
   const res = await authorizedFetch("admin", `${API_BASE}/api/admin/audit${queryString(params)}`);
   if (!res.ok) {
-    throw new Error(await res.text());
+    throw new Error(await readApiErrorMessage(res));
   }
   return (await res.json()) as AuditPage;
 }
@@ -64,7 +65,7 @@ export async function fetchAuditPage(params: AuditListParams): Promise<AuditPage
 export async function downloadAuditCsv(params: AuditListParams): Promise<void> {
   const res = await authorizedFetch("admin", `${API_BASE}/api/admin/audit.csv${queryString(params)}`);
   if (!res.ok) {
-    throw new Error(await res.text());
+    throw new Error(await readApiErrorMessage(res));
   }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);

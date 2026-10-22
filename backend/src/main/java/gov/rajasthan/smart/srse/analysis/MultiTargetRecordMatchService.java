@@ -1,8 +1,13 @@
 package gov.rajasthan.smart.srse.analysis;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import gov.rajasthan.smart.srse.config.QueryFailureMessages;
 import gov.rajasthan.smart.srse.execution.GuardrailProperties;
+import gov.rajasthan.smart.srse.execution.JdbcStatements;
+import gov.rajasthan.smart.srse.execution.ScopedJdbc;
 import gov.rajasthan.smart.srse.lakehouse.QualifiedTable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -51,6 +56,8 @@ import java.util.StringJoiner;
 @Service
 public class MultiTargetRecordMatchService {
 
+    private static final Logger log = LoggerFactory.getLogger(MultiTargetRecordMatchService.class);
+
     private final RecordMatchService recordMatchService;
     private final JdbcTemplate jdbc;
     private final GuardrailProperties guardrails;
@@ -78,12 +85,22 @@ public class MultiTargetRecordMatchService {
     }
 
     public StreamingResponseBody matchMulti(MultiTargetRecordMatchRequest req) {
-        return matchMulti(req, failure -> { });
+        return matchMulti(req, null, failure -> { });
     }
 
     /** @param onTargetFailure told for each target that fails (reported in-band; the stream still completes). */
     public StreamingResponseBody matchMulti(
             MultiTargetRecordMatchRequest req, java.util.function.Consumer<Throwable> onTargetFailure) {
+        return matchMulti(req, null, onTargetFailure);
+    }
+
+    /**
+     * @param planned per-target plans from the audit pass, in target order. Null plans again.
+     */
+    public StreamingResponseBody matchMulti(
+            MultiTargetRecordMatchRequest req,
+            List<RecordMatchService.MatchQuery> planned,
+            java.util.function.Consumer<Throwable> onTargetFailure) {
         QualifiedTable hubTable = validateBeforeStream(req);
         MergedLayout layout = MergedLayout.build(req, recordMatchService::isComparisonGroupFuzzy);
         return outputStream -> {
@@ -113,7 +130,7 @@ public class MultiTargetRecordMatchService {
 
                 try {
                     RecordMatchRequest single = toSingleMatch(req, target);
-                    RecordMatchService.MatchQuery query = recordMatchService.planMatch(single);
+                    RecordMatchService.MatchQuery query = plannedQuery(planned, i, single);
 
                     // Planned BEFORE `started` is announced, so the event can
                     // carry this target's SQL. A target that fails planning
@@ -144,9 +161,13 @@ public class MultiTargetRecordMatchService {
                             "label", target.label(),
                             "phase", "done",
                             "rows", targetRows));
+                } catch (UncheckedIOException e) {
+                    log.warn("Multi-target stream closed by the client; the query was cancelled");
+                    throw e.getCause();
                 } catch (Exception e) {
+                    log.warn("Multi-target query failed for {}: {}", target.label(), e.toString());
                     onTargetFailure.accept(e);
-                    String message = e.getMessage() != null ? e.getMessage() : e.toString();
+                    String message = QueryFailureMessages.officerMessage(e);
                     perTargetSummary.add(Map.of(
                             "label", target.label(),
                             "rows", 0,
@@ -174,6 +195,11 @@ public class MultiTargetRecordMatchService {
      * so the client rejects the download rather than saving a truncated file.
      */
     public ResponseEntity<StreamingResponseBody> matchMultiCsv(MultiTargetRecordMatchRequest req) {
+        return matchMultiCsv(req, null);
+    }
+
+    public ResponseEntity<StreamingResponseBody> matchMultiCsv(
+            MultiTargetRecordMatchRequest req, List<RecordMatchService.MatchQuery> planned) {
         validateBeforeStream(req);
         MergedLayout layout = MergedLayout.build(req, recordMatchService::isComparisonGroupFuzzy);
         StreamingResponseBody body = outputStream -> {
@@ -190,14 +216,13 @@ public class MultiTargetRecordMatchService {
                 }
                 TargetMatchSpec target = req.targets().get(i);
                 RecordMatchRequest single = toSingleMatch(req, target);
-                RecordMatchService.MatchQuery query = recordMatchService.planMatch(single);
+                RecordMatchService.MatchQuery query = plannedQuery(planned, i, single);
                 int timeoutSeconds = timeoutForTarget(streamStartNanos, budgetMillis);
                 if (timeoutSeconds <= 0) {
                     throw new IllegalStateException("Multi-match time budget exhausted before target " + i);
                 }
-                JdbcTemplate executionJdbc = recordMatchService.jdbcFor(query);
-                if (executionJdbc == null) executionJdbc = jdbc;
-                executionJdbc.setQueryTimeout(timeoutSeconds);
+                JdbcTemplate executionJdbc = ScopedJdbc.withTimeout(
+                        jdbcFor(query), timeoutSeconds);
                 ColumnMapRowMapper rowMapper = new ColumnMapRowMapper();
                 TargetRowMapper mapper = layout.mapperForTarget(i);
                 executionJdbc.query(query.routedSql(), query.params().toArray(), (RowCallbackHandler) rs -> {
@@ -207,6 +232,7 @@ public class MultiTargetRecordMatchService {
                                 .map(mapper.mapRow(raw)::get)
                                 .toList());
                     } catch (IOException e) {
+                        JdbcStatements.cancel(rs.getStatement());
                         throw new UncheckedIOException(e);
                     }
                 });
@@ -256,11 +282,22 @@ public class MultiTargetRecordMatchService {
         return hubTable;
     }
 
+    private RecordMatchService.MatchQuery plannedQuery(
+            List<RecordMatchService.MatchQuery> planned, int index, RecordMatchRequest single) {
+        if (planned != null && index < planned.size() && planned.get(index) != null) {
+            return planned.get(index);
+        }
+        return recordMatchService.planMatch(single);
+    }
+
+    private JdbcTemplate jdbcFor(RecordMatchService.MatchQuery query) {
+        JdbcTemplate executionJdbc = recordMatchService.jdbcFor(query);
+        return executionJdbc == null ? jdbc : executionJdbc;
+    }
+
     private long streamTargetRows(java.io.OutputStream outputStream, RecordMatchService.MatchQuery query,
                                   MergedLayout layout, int targetIndex, int timeoutSeconds) throws IOException {
-        JdbcTemplate executionJdbc = recordMatchService.jdbcFor(query);
-        if (executionJdbc == null) executionJdbc = jdbc;
-        executionJdbc.setQueryTimeout(timeoutSeconds);
+        JdbcTemplate executionJdbc = ScopedJdbc.withTimeout(jdbcFor(query), timeoutSeconds);
         ColumnMapRowMapper rowMapper = new ColumnMapRowMapper();
         TargetRowMapper mapper = layout.mapperForTarget(targetIndex);
         long[] count = {0};
@@ -269,6 +306,7 @@ public class MultiTargetRecordMatchService {
             try {
                 writeLine(outputStream, Map.of("type", "row", "data", mapper.mapRow(raw)));
             } catch (IOException e) {
+                JdbcStatements.cancel(rs.getStatement());
                 throw new UncheckedIOException(e);
             }
             count[0]++;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { RegistryBrowseFilter } from "@/lib/analysisApi";
 
 /**
@@ -146,6 +146,13 @@ export default function LakehouseCascade({
   const { listSourceSystems, listTableGroups, listLayers, listCatalogs, listSchemas, listTables } =
     fetchers;
 
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  const valueRef = useRef(value);
+  valueRef.current = value;
+  const browseFilterRef = useRef(browseFilter);
+  browseFilterRef.current = browseFilter;
+
   useEffect(() => {
     if (!listSourceSystems) {
       return undefined;
@@ -194,19 +201,20 @@ export default function LakehouseCascade({
 
   useEffect(() => {
     let cancelled = false;
-    listCatalogs(browseFilter)
+    listCatalogs(browseFilterRef.current)
       .then((c) => {
         if (cancelled) return;
         setCatalogFetch({ key: browseFilterKey, items: c });
-        if (value.catalog && !c.includes(value.catalog)) {
-          onChange({ catalog: "", schema: "", table: "" });
+        const current = valueRef.current;
+        if (current.catalog && !c.includes(current.catalog)) {
+          onChangeRef.current({ catalog: "", schema: "", table: "" });
         }
       })
       .catch(report);
     return () => {
       cancelled = true;
     };
-  }, [browseFilterKey, browseFilter, listCatalogs, report, value.catalog, onChange]);
+  }, [browseFilterKey, listCatalogs, report]);
 
   const sourceSystemOptions = listSourceSystems ? sourceSystems : [];
   const tableGroupOptions = listTableGroups ? tableGroups : [];
@@ -226,42 +234,46 @@ export default function LakehouseCascade({
   }, [layerOptions]);
 
   useEffect(() => {
-    if (!value.catalog) {
+    const catalog = valueRef.current.catalog;
+    if (!catalog) {
       return undefined;
     }
     let cancelled = false;
-    listSchemas(value.catalog, browseFilter)
+    listSchemas(catalog, browseFilterRef.current)
       .then((s) => {
         if (cancelled) return;
         setSchemaFetch({ key: schemaKey, items: s });
-        if (value.schema && !s.includes(value.schema)) {
-          onChange({ catalog: value.catalog, schema: "", table: "" });
+        const current = valueRef.current;
+        if (current.schema && !s.includes(current.schema)) {
+          onChangeRef.current({ catalog: current.catalog, schema: "", table: "" });
         }
       })
       .catch(report);
     return () => {
       cancelled = true;
     };
-  }, [value.catalog, value.schema, schemaKey, browseFilter, listSchemas, report, onChange]);
+  }, [schemaKey, listSchemas, report]);
 
   useEffect(() => {
-    if (!value.catalog || !value.schema) {
+    const currentValue = valueRef.current;
+    if (!currentValue.catalog || !currentValue.schema) {
       return undefined;
     }
     let cancelled = false;
-    listTables(value.catalog, value.schema, browseFilter)
+    listTables(currentValue.catalog, currentValue.schema, browseFilterRef.current)
       .then((t) => {
         if (cancelled) return;
         setTableFetch({ key: tableKey, items: t });
-        if (value.table && !t.some((row) => row.name === value.table)) {
-          onChange({ catalog: value.catalog, schema: value.schema, table: "" });
+        const current = valueRef.current;
+        if (current.table && !t.some((row) => row.name === current.table)) {
+          onChangeRef.current({ catalog: current.catalog, schema: current.schema, table: "" });
         }
       })
       .catch(report);
     return () => {
       cancelled = true;
     };
-  }, [value.catalog, value.schema, value.table, tableKey, browseFilter, listTables, report, onChange]);
+  }, [tableKey, listTables, report]);
 
   function clearCascade() {
     onChange({ catalog: "", schema: "", table: "" });

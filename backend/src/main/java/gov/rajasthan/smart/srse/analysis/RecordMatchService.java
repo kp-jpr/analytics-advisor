@@ -11,7 +11,10 @@ import gov.rajasthan.smart.srse.compiler.FuzzyOptions;
 import gov.rajasthan.smart.srse.compiler.RuleCompiler;
 import gov.rajasthan.smart.srse.compiler.SqlTypeFamily;
 import gov.rajasthan.smart.srse.compiler.TypeCoercion;
+import gov.rajasthan.smart.srse.config.QueryFailureMessages;
 import gov.rajasthan.smart.srse.execution.GuardrailProperties;
+import gov.rajasthan.smart.srse.execution.JdbcStatements;
+import gov.rajasthan.smart.srse.execution.ScopedJdbc;
 import gov.rajasthan.smart.srse.execution.AnalysisExecutionRoute;
 import gov.rajasthan.smart.srse.execution.AnalysisExecutionRouter;
 import gov.rajasthan.smart.srse.lakehouse.AnalysisScopeFromService;
@@ -38,13 +41,13 @@ import java.io.UncheckedIOException;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.StringJoiner;
-import java.util.stream.Stream;
 
 /**
  * Cross-table fuzzy/exact record matching for the Analysis tab.
@@ -479,7 +482,6 @@ public class RecordMatchService {
                 throw new IllegalArgumentException("comparisonGroups[" + index + "]." + side
                         + " must reference " + expectedTable.qualifiedName());
             }
-            registry.validateColumn(c.qualifiedColumn());
         }
     }
 
@@ -675,18 +677,27 @@ public class RecordMatchService {
         }
         QualifiedTable table = tableForSingleSource(req);
         if (req.grouped()) {
+            Map<String, RegisteredColumn> described = describeRequestColumns(table, req, req.sourceRules());
             MatchGroupingSql.validateSingleSourceGrouped(
-                    req, table, registry,
+                    req, table, described,
                     analysisProperties.maxGroupColumns(),
                     analysisProperties.maxGroupColumns());
-        } else if (req.sourceDisplayColumns().isEmpty() && !req.countOnly()) {
+            return buildSingleSourceBody(req, table, described);
+        }
+        if (req.sourceDisplayColumns().isEmpty() && !req.countOnly()) {
             throw new IllegalArgumentException("singleSource requires at least one display column");
         }
         if (!req.sourceDisplayColumns().isEmpty()) {
             validateDisplayColumns(req.sourceDisplayColumns(), table, "sourceDisplayColumns");
         }
+        Map<String, RegisteredColumn> described = describeRequestColumns(table, req, req.sourceRules());
+        return buildSingleSourceBody(req, table, described);
+    }
+
+    private MatchQuery buildSingleSourceBody(
+            RecordMatchRequest req, QualifiedTable table, Map<String, RegisteredColumn> described) {
         AppliedSideRules applied = applySideRules(
-                scopeFrom.planFrom(table), req.sourceRules(), table);
+                scopeFrom.planFrom(table), req.sourceRules(), table, described);
         ScopeFilteredFrom scope = applied.scope();
         // No join — fan-out guard does not apply; do not call enforceEstimatedRowCeiling with
         // degenerate empty join groups.
@@ -698,7 +709,7 @@ public class RecordMatchService {
         StringBuilder select = new StringBuilder();
         if (req.grouped()) {
             MatchGroupingSql.appendGroupedSelect(select, outerColumns, req, table, table,
-                    MatchGroupingSql.aggregateColumnTypes(req, registry));
+                    MatchGroupingSql.aggregateColumnTypes(req, table, table, described, described));
         } else if (req.sourceDisplayColumns().isEmpty()) {
             select.append("1 AS \"_row\"");
             outerColumns.add("_row");
@@ -769,24 +780,24 @@ public class RecordMatchService {
     }
 
     private AppliedSideRules applySideRules(
-            ScopeFilteredFrom scope, Ast.PredicateSpec rules, QualifiedTable table) {
+            ScopeFilteredFrom scope,
+            Ast.PredicateSpec rules,
+            QualifiedTable table,
+            Map<String, RegisteredColumn> knownColumns) {
         if (rules == null) {
             return new AppliedSideRules(scope, null);
         }
-        validateRulesOnTable(rules, table);
-        CompiledQuery compiled = ruleCompiler.compile(rules, table);
+        List<String> columns = new ArrayList<>();
+        collectRuleColumns(rules.root(), table, columns);
+        CompiledQuery compiled = ruleCompiler.compile(rules, table, knownColumns);
         return new AppliedSideRules(
                 scope.withRulePredicate(compiled.predicateSql(), compiled.params()),
                 compiled.fuzzyScore());
     }
 
-    private void validateRulesOnTable(Ast.PredicateSpec spec, QualifiedTable table) {
-        walkRules(spec.root(), table);
-    }
-
-    private void walkRules(Ast.Node node, QualifiedTable table) {
+    private void collectRuleColumns(Ast.Node node, QualifiedTable table, List<String> columns) {
         if (node instanceof Ast.GroupNode group) {
-            group.children().forEach(child -> walkRules(child, table));
+            group.children().forEach(child -> collectRuleColumns(child, table, columns));
             return;
         }
         if (node instanceof Ast.PredicateNode predicate) {
@@ -794,7 +805,7 @@ public class RecordMatchService {
                 throw new IllegalArgumentException(
                         "Rule column must be on " + table.qualifiedName());
             }
-            registry.validateColumn(predicate.column());
+            columns.add(predicate.column().column());
         }
     }
 
@@ -826,19 +837,19 @@ public class RecordMatchService {
                 .toList();
         Sides sides = new Sides(
                 sourceTable, describeSide(sourceTable, join.sourceColumns(), req.sourceDisplayColumns(),
-                        comparisonSourceColumns),
+                        comparisonSourceColumns, req, req.sourceRules()),
                 targetTable, describeSide(targetTable, join.targetColumns(), req.targetDisplayColumns(),
-                        comparisonTargetColumns));
+                        comparisonTargetColumns, req, req.targetRules()));
         if (req.dedup() != null) {
             validateSideMembership(req.dedup().qualifiedTable(), sourceTable, targetTable, "dedup.table");
-            registry.validateColumn(req.dedup().qualifiedColumn());
         }
         if (req.grouped()) {
             MatchGroupingSql.validateGroupedRequest(
                     req,
                     analysisProperties.maxGroupColumns(),
                     analysisProperties.maxGroupColumns());
-            MatchGroupingSql.validateColumnsOnSides(req, sourceTable, targetTable, registry);
+            MatchGroupingSql.validateColumnsOnSides(
+                    req, sourceTable, targetTable, sides.sourceColumns(), sides.targetColumns());
         }
         validateOuterJoinRules(req, sides);
         validateComparisonGroups(req.comparisonGroups(), sides);
@@ -875,9 +886,11 @@ public class RecordMatchService {
         List<UnnestSide> targetUnnests = new ArrayList<>();
         List<GroupPlan> groups = planGroups(join, sides, sourceUnnests, targetUnnests);
         ScopeFilteredFrom sourceScope = applySideRules(
-                scopeFrom.planFrom(sides.sourceTable()), req.sourceRules(), sides.sourceTable()).scope();
+                scopeFrom.planFrom(sides.sourceTable()), req.sourceRules(), sides.sourceTable(),
+                sides.sourceColumns()).scope();
         ScopeFilteredFrom targetScope = applySideRules(
-                scopeFrom.planFrom(sides.targetTable()), req.targetRules(), sides.targetTable()).scope();
+                scopeFrom.planFrom(sides.targetTable()), req.targetRules(), sides.targetTable(),
+                sides.targetColumns()).scope();
         enforceEstimatedRowCeiling(sides, groups, sourceScope, targetScope, req.grouped());
 
         List<ComparisonPlan> comparisonPlans = List.of();
@@ -885,7 +898,9 @@ public class RecordMatchService {
         if (req.grouped()) {
             MatchGroupingSql.appendGroupedSelect(
                     select, outerColumns, req, sides.sourceTable(), sides.targetTable(),
-                    MatchGroupingSql.aggregateColumnTypes(req, registry));
+                    MatchGroupingSql.aggregateColumnTypes(
+                            req, sides.sourceTable(), sides.targetTable(),
+                            sides.sourceColumns(), sides.targetColumns()));
         } else {
             // Comparison placeholders live in SELECT, which precedes ON in the final SQL —
             // bind comparison params before join params.
@@ -1257,8 +1272,8 @@ public class RecordMatchService {
         return outputStream -> {
             writeLine(outputStream, Map.of("type", "meta", "columns", query.columns(), "sql", displaySql));
             try {
-                JdbcTemplate executionJdbc = jdbcFor(query);
-                executionJdbc.setQueryTimeout(guardrails.queryTimeoutSeconds());
+                JdbcTemplate executionJdbc = ScopedJdbc.withTimeout(
+                        jdbcFor(query), guardrails.queryTimeoutSeconds());
                 ColumnMapRowMapper rowMapper = new ColumnMapRowMapper();
                 long[] totalRows = {0};
                 executionJdbc.query(query.routedSql(), query.params().toArray(), (RowCallbackHandler) rs -> {
@@ -1266,17 +1281,24 @@ public class RecordMatchService {
                     try {
                         writeLine(outputStream, Map.of("type", "row", "data", row));
                     } catch (IOException e) {
+                        JdbcStatements.cancel(rs.getStatement());
                         throw new UncheckedIOException(e);
                     }
                     totalRows[0]++;
                 });
                 writeLine(outputStream, Map.of("type", "done", "totalRows", totalRows[0]));
             } catch (UncheckedIOException e) {
+                log.warn("Match stream closed by the client; the query was cancelled");
                 throw e.getCause();
             } catch (Exception e) {
+                log.warn("Match query failed: {}", e.toString());
                 onEngineFailure.accept(e);
-                String message = e.getMessage() != null ? e.getMessage() : e.toString();
-                writeLine(outputStream, Map.of("type", "error", "message", message));
+                try {
+                    writeLine(outputStream, Map.of(
+                            "type", "error", "message", QueryFailureMessages.officerMessage(e)));
+                } catch (IOException io) {
+                    log.warn("Could not report the match error because the client is gone");
+                }
             }
         };
     }
@@ -1589,8 +1611,8 @@ public class RecordMatchService {
                     : jdbc.queryForObject(sql, params.toArray(), Long.class);
         }
         AnalysisExecutionRouter.RoutedSql routed = executionRouter.route(sql, List.of(table));
-        JdbcTemplate executionJdbc = executionRouter.jdbc(routed.route());
-        executionJdbc.setQueryTimeout(guardrails.queryTimeoutSeconds());
+        JdbcTemplate executionJdbc = ScopedJdbc.withTimeout(
+                executionRouter.jdbc(routed.route()), guardrails.queryTimeoutSeconds());
         return params.isEmpty()
                 ? executionJdbc.queryForObject(routed.sql(), Long.class)
                 : executionJdbc.queryForObject(routed.sql(), params.toArray(), Long.class);
@@ -1742,17 +1764,63 @@ public class RecordMatchService {
      * columns walks the whole catalog/schema/table hierarchy, and every
      * criterion here shares one table by {@link #tableOf}'s check.
      */
-    private Map<String, RegisteredColumn> describeSide(QualifiedTable table, List<MatchCriterion> criteria,
-                                                         List<DisplayColumn> display,
-                                                         List<MatchCriterion> alsoDescribe) {
-        List<String> columnNames = Stream.of(
-                        criteria.stream().map(MatchCriterion::column),
-                        display.stream().map(DisplayColumn::column),
-                        alsoDescribe.stream().map(MatchCriterion::column))
-                .flatMap(s -> s)
-                .distinct()
-                .toList();
-        return registry.describeColumns(table, columnNames);
+    private Map<String, RegisteredColumn> describeRequestColumns(
+            QualifiedTable table, RecordMatchRequest req, Ast.PredicateSpec rules) {
+        LinkedHashSet<String> names = new LinkedHashSet<>();
+        for (DisplayColumn column : req.sourceDisplayColumns()) {
+            if (table.equals(column.qualifiedTable())) {
+                names.add(column.column());
+            }
+        }
+        addDescribedExtras(names, table, req, rules);
+        return describeNames(table, names);
+    }
+
+    private Map<String, RegisteredColumn> describeSide(
+            QualifiedTable table,
+            List<MatchCriterion> criteria,
+            List<DisplayColumn> display,
+            List<MatchCriterion> alsoDescribe,
+            RecordMatchRequest req,
+            Ast.PredicateSpec rules) {
+        LinkedHashSet<String> names = new LinkedHashSet<>();
+        criteria.forEach(c -> names.add(c.column()));
+        display.forEach(d -> names.add(d.column()));
+        alsoDescribe.forEach(c -> names.add(c.column()));
+        addDescribedExtras(names, table, req, rules);
+        return describeNames(table, names);
+    }
+
+    private void addDescribedExtras(
+            LinkedHashSet<String> names,
+            QualifiedTable table,
+            RecordMatchRequest req,
+            Ast.PredicateSpec rules) {
+        if (req.dedup() != null && table.equals(req.dedup().qualifiedTable())) {
+            names.add(req.dedup().column());
+        }
+        for (DisplayColumn column : req.groupByColumns()) {
+            if (table.equals(column.qualifiedTable())) {
+                names.add(column.column());
+            }
+        }
+        for (AggregateSpec aggregate : req.aggregates()) {
+            if (aggregate.column() != null && table.equals(aggregate.column().qualifiedTable())) {
+                names.add(aggregate.column().column());
+            }
+        }
+        if (rules != null) {
+            List<String> ruleColumns = new ArrayList<>();
+            collectRuleColumns(rules.root(), table, ruleColumns);
+            names.addAll(ruleColumns);
+        }
+    }
+
+    private Map<String, RegisteredColumn> describeNames(QualifiedTable table, Collection<String> names) {
+        if (names.isEmpty()) {
+            return Map.of();
+        }
+        return registry.describeColumns(table, List.copyOf(names));
     }
 
     private void validateDisplayColumns(List<DisplayColumn> columns, QualifiedTable sideTable, String label) {
@@ -1767,7 +1835,6 @@ public class RecordMatchService {
             if (!sideTable.equals(d.qualifiedTable())) {
                 throw new IllegalArgumentException(label + "[" + i + "] must reference " + sideTable.qualifiedName());
             }
-            registry.validateColumn(d.qualifiedColumn());
         }
     }
 

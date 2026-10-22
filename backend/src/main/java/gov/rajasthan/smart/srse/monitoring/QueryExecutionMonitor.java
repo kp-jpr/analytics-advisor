@@ -6,6 +6,8 @@ import gov.rajasthan.smart.srse.execution.GuardrailProperties;
 import gov.rajasthan.smart.srse.identity.AdminAccessDeniedException;
 import gov.rajasthan.smart.srse.identity.AppUser;
 import gov.rajasthan.smart.srse.identity.AuthenticatedUserService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
@@ -20,6 +22,8 @@ import java.util.concurrent.Callable;
  */
 @Component
 public class QueryExecutionMonitor {
+
+    private static final Logger log = LoggerFactory.getLogger(QueryExecutionMonitor.class);
 
     private final ActiveQueryRegistry registry;
     private final AnalysisAuditService analysisAudit;
@@ -104,7 +108,7 @@ public class QueryExecutionMonitor {
             try {
                 analysisAudit.recordQueryFinished(ticket, auditOutcome, durationMs);
             } catch (RuntimeException ex) {
-                // Q6 — audit failure must not affect query outcome
+                log.warn("Query-finished audit write failed for {}: {}", ticket.queryId(), ex.toString());
             }
         }
     }

@@ -22,9 +22,12 @@ import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
+import java.sql.Statement;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -1073,7 +1076,7 @@ class RecordMatchServiceTest {
     @Test
     void displayColumnRejectedByRegistryNeverReachesDatabase() {
         doThrow(new IllegalArgumentException("Column not available"))
-                .when(registry).validateColumn(any(QualifiedColumn.class));
+                .when(registry).describeColumns(any(), any());
 
         RecordMatchRequest req = new RecordMatchRequest(
                 List.of(exact("beneficiary", "district")),
@@ -1085,6 +1088,41 @@ class RecordMatchServiceTest {
 
         assertThrows(IllegalArgumentException.class, () -> service.match(req));
         verify(jdbc, never()).query(anyString(), any(Object[].class), any(RowCallbackHandler.class));
+    }
+
+    @Test
+    void clientDisconnectCancelsTheMatchStatement() throws Exception {
+        Statement statement = mock(Statement.class);
+        ResultSetMetaData md = mock(ResultSetMetaData.class);
+        when(md.getColumnCount()).thenReturn(1);
+        when(md.getColumnLabel(1)).thenReturn("source_district");
+        ResultSet rs = mock(ResultSet.class);
+        when(rs.getMetaData()).thenReturn(md);
+        when(rs.getObject(1)).thenReturn("Jaipur");
+        when(rs.getStatement()).thenReturn(statement);
+        doAnswer(inv -> {
+            ((RowCallbackHandler) inv.getArgument(2)).processRow(rs);
+            return null;
+        }).when(jdbc).query(anyString(), any(Object[].class), any(RowCallbackHandler.class));
+
+        StreamingResponseBody body = service.match(exactMatchRequest());
+        OutputStream out = new OutputStream() {
+            @Override
+            public void write(int b) throws IOException {
+                write(new byte[] {(byte) b}, 0, 1);
+            }
+
+            @Override
+            public void write(byte[] b, int off, int len) throws IOException {
+                String text = new String(b, off, len, StandardCharsets.UTF_8);
+                if (text.contains("\"type\":\"row\"")) {
+                    throw new IOException("client gone");
+                }
+            }
+        };
+
+        assertThrows(IOException.class, () -> body.writeTo(out));
+        verify(statement).cancel();
     }
 
     @Test

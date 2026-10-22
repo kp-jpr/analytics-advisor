@@ -335,6 +335,7 @@ public class LakehouseRegistryService {
         deleteMetadataSnapshots(existing);
         tableScopeRegistrationService.deleteScopeDataForRegistration(id);
         registrations.deleteById(id);
+        browse.invalidateMetadata();
         auditService.recordRegistryEvent(
                 AuditActionType.TABLE_UNREGISTERED,
                 authenticatedUserService.requireCurrentUser(),
@@ -744,6 +745,7 @@ public class LakehouseRegistryService {
     }
 
     private void triggerMetadataSync(RegisteredTable table) {
+        browse.invalidateMetadata();
         if (metadataSyncService != null) {
             metadataSyncService.scheduleSyncAfterRegistration(table);
         }

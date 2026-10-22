@@ -1,3 +1,4 @@
+import { readApiErrorMessage } from "./apiError";
 import { authorizedFetch as officerFetch } from "./authToken";
 import type { RecordMatchRequest } from "./analysisApi";
 
@@ -23,14 +24,14 @@ export type SavedQueryDetail = SavedQuerySummary & {
 
 export function listSavedQueries(): Promise<SavedQuerySummary[]> {
   return authorizedFetch(`${API_BASE}/api/saved-queries`, { credentials: "include" }).then(async (res) => {
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw new Error(await readApiErrorMessage(res));
     return res.json() as Promise<SavedQuerySummary[]>;
   });
 }
 
 export function getSavedQuery(id: number): Promise<SavedQueryDetail> {
   return authorizedFetch(`${API_BASE}/api/saved-queries/${id}`, { credentials: "include" }).then(async (res) => {
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw new Error(await readApiErrorMessage(res));
     return res.json() as Promise<SavedQueryDetail>;
   });
 }
@@ -46,7 +47,7 @@ export function createSavedQuery(body: {
     credentials: "include",
     body: JSON.stringify(body),
   }).then(async (res) => {
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw new Error(await readApiErrorMessage(res));
     return res.json() as Promise<SavedQueryDetail>;
   });
 }
@@ -56,6 +57,6 @@ export function deleteSavedQuery(id: number): Promise<void> {
     method: "DELETE",
     credentials: "include",
   }).then(async (res) => {
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw new Error(await readApiErrorMessage(res));
   });
 }

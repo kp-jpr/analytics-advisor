@@ -1,3 +1,4 @@
+import { readApiErrorMessage } from "@/lib/apiError";
 import { authorizedFetch } from "@/lib/authToken";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8080";
@@ -21,7 +22,7 @@ export type NodeView = {
 
 export async function listDimensions(): Promise<DimensionView[]> {
   const res = await adminFetch(`${API_BASE}/api/admin/scope/dimensions`);
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw new Error(await readApiErrorMessage(res));
   return res.json();
 }
 
@@ -35,13 +36,13 @@ export async function createDimension(body: {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw new Error(await readApiErrorMessage(res));
   return res.json();
 }
 
 export async function listLevels(dimensionId: number): Promise<LevelView[]> {
   const res = await adminFetch(`${API_BASE}/api/admin/scope/levels?dimensionId=${dimensionId}`);
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw new Error(await readApiErrorMessage(res));
   return res.json();
 }
 
@@ -55,20 +56,20 @@ export async function createLevel(body: {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw new Error(await readApiErrorMessage(res));
   return res.json();
 }
 
 export async function listScopeNodes(dimensionId?: number): Promise<NodeView[]> {
   const q = dimensionId != null ? `?dimensionId=${dimensionId}` : "";
   const res = await adminFetch(`${API_BASE}/api/admin/scope/nodes${q}`);
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw new Error(await readApiErrorMessage(res));
   return res.json();
 }
 
 export async function listGrantableNodes(): Promise<NodeView[]> {
   const res = await adminFetch(`${API_BASE}/api/admin/scope/nodes/grantable`);
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw new Error(await readApiErrorMessage(res));
   const body = (await res.json()) as { nodes: NodeView[] };
   return body.nodes;
 }
@@ -85,11 +86,11 @@ export async function createScopeNode(body: {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw new Error(await readApiErrorMessage(res));
   return res.json();
 }
 
 export async function deleteScopeNode(id: number): Promise<void> {
   const res = await adminFetch(`${API_BASE}/api/admin/scope/nodes/${id}`, { method: "DELETE" });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw new Error(await readApiErrorMessage(res));
 }

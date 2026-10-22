@@ -14,6 +14,7 @@ import java.util.List;
 import static org.mockito.Mockito.when;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.times;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -172,19 +173,48 @@ class LakehouseBrowseServiceTest {
     }
 
     /**
-     * The browse path shares prestoJdbcTemplate with every other service, each
-     * of which overwrites queryTimeout for its own queries. Browsing set none,
-     * so it ran on whatever was left behind — a hardcoded 30 on the bean, which
-     * cut off admin table listings while SRSE_QUERY_TIMEOUT_SECONDS said 180.
+     * Catalog metadata uses a short timeout so a slow information_schema walk
+     * cannot hold a pooled connection for the full match timeout.
      */
     @Test
-    void browseAppliesTheConfiguredQueryTimeout() {
+    void browseAppliesTheMetadataQueryTimeout() {
         when(jdbc.queryForList(eq("SHOW CATALOGS"), eq(String.class))).thenReturn(List.of("iceberg"));
         when(jdbc.queryForList(contains("information_schema.schemata"), eq(String.class)))
                 .thenReturn(List.of("srse"));
         when(jdbc.queryForList(contains("information_schema.tables"), eq(String.class), any(Object[].class)))
                 .thenReturn(List.of("beneficiary"));
         service.listTables("iceberg", "srse");
-        verify(jdbc, atLeastOnce()).setQueryTimeout(180);
+        verify(jdbc, atLeastOnce()).setQueryTimeout(15);
+    }
+
+    @Test
+    void repeatedCatalogListHitsPrestoOnceUntilInvalidated() {
+        stubCatalogs(CATALOG);
+        service.listCatalogs();
+        service.listCatalogs();
+        verify(jdbc, times(1)).queryForList(eq("SHOW CATALOGS"), eq(String.class));
+
+        service.invalidateMetadata();
+        service.listCatalogs();
+        verify(jdbc, times(2)).queryForList(eq("SHOW CATALOGS"), eq(String.class));
+    }
+
+    @Test
+    void cachedColumnListDoesNotListTablesAgain() {
+        stubCatalogs(CATALOG);
+        stubSchemas(SCHEMA);
+        stubTables(TABLE);
+        lenient().when(jdbc.query(
+                        contains("information_schema.columns"),
+                        any(RowMapper.class),
+                        eq(SCHEMA),
+                        eq(TABLE)))
+                .thenReturn(List.of(new LakehouseBrowseService.ColumnInfo("bank_id", "varchar")));
+
+        service.listColumns(CATALOG, SCHEMA, TABLE);
+        service.listColumns(CATALOG, SCHEMA, TABLE);
+
+        verify(jdbc, times(1)).queryForList(
+                contains("information_schema.tables"), eq(String.class), eq(SCHEMA));
     }
 }

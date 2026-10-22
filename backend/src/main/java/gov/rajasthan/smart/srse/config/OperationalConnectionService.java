@@ -51,7 +51,7 @@ public class OperationalConnectionService {
             candidate = poolFactory.create(jdbcUrl, username, password, driverClassName);
             connectionProbe.probe(candidate);
         } catch (Exception e) {
-            throw new ConnectionTestFailedException("operational", e.getMessage());
+            throw new ConnectionTestFailedException("operational", e.getMessage(), e);
         } finally {
             // Always throwaway — the live JPA datasource is never touched here.
             if (candidate instanceof AutoCloseable closeable) {

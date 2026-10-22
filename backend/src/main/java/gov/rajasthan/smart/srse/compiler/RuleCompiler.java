@@ -34,36 +34,58 @@ public class RuleCompiler {
     }
 
     public CompiledQuery compile(Ast.PredicateSpec spec, QualifiedTable table) {
+        return compile(spec, table, Map.of());
+    }
+
+    public CompiledQuery compile(
+            Ast.PredicateSpec spec, QualifiedTable table, Map<String, RegisteredColumn> knownColumns) {
         List<Object> params = new ArrayList<>();
         FuzzyMatchContext fuzzyCtx = new FuzzyMatchContext();
-        String sql = emit(spec.root(), table, params, fuzzyCtx);
+        String sql = emit(spec.root(), table, params, fuzzyCtx, knownColumns);
         CompiledQuery.FuzzyScoreProjection score = fuzzyCtx.buildScoreProjection();
         return new CompiledQuery(sql, params, score);
     }
 
-    private String emit(Ast.Node node, QualifiedTable table, List<Object> params, FuzzyMatchContext fuzzyCtx) {
+    private String emit(
+            Ast.Node node,
+            QualifiedTable table,
+            List<Object> params,
+            FuzzyMatchContext fuzzyCtx,
+            Map<String, RegisteredColumn> knownColumns) {
         if (node instanceof Ast.GroupNode g) {
-            return emitGroup(g, table, params, fuzzyCtx);
+            return emitGroup(g, table, params, fuzzyCtx, knownColumns);
         }
         if (node instanceof Ast.PredicateNode p) {
-            return emitPredicate(p, table, params, fuzzyCtx);
+            return emitPredicate(p, table, params, fuzzyCtx, knownColumns);
         }
         throw new IllegalStateException("Unexpected node: " + node);
     }
 
-    private String emitGroup(Ast.GroupNode g, QualifiedTable table, List<Object> params, FuzzyMatchContext fuzzyCtx) {
+    private String emitGroup(
+            Ast.GroupNode g,
+            QualifiedTable table,
+            List<Object> params,
+            FuzzyMatchContext fuzzyCtx,
+            Map<String, RegisteredColumn> knownColumns) {
         String joiner = g.op() == Ast.BoolOp.AND ? " AND " : " OR ";
         StringJoiner sj = new StringJoiner(joiner, "(", ")");
         for (Ast.Node child : g.children()) {
-            sj.add(emit(child, table, params, fuzzyCtx));
+            sj.add(emit(child, table, params, fuzzyCtx, knownColumns));
         }
         return sj.toString();
     }
 
     @SuppressWarnings("unchecked")
     private String emitPredicate(
-            Ast.PredicateNode p, QualifiedTable table, List<Object> params, FuzzyMatchContext fuzzyCtx) {
-        RegisteredColumn described = columns.resolve(p.column(), table);
+            Ast.PredicateNode p,
+            QualifiedTable table,
+            List<Object> params,
+            FuzzyMatchContext fuzzyCtx,
+            Map<String, RegisteredColumn> knownColumns) {
+        RegisteredColumn described = knownColumns.get(p.column().column());
+        if (described == null) {
+            described = columns.resolve(p.column(), table);
+        }
         SqlTypeFamily columnFamily = SqlTypeFamily.of(described.dataType());
         String colRef = columnRef(p.column().column(), columnFamily, p.operator(), p.value());
         return switch (p.operator()) {

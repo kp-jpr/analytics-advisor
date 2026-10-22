@@ -229,7 +229,7 @@ class RecordMatchGroupingTest {
     void hiddenGroupingColumnRefused() {
         when(scopeFrom.planFrom(SOURCE)).thenReturn(ScopeFilteredFrom.unfiltered(SRC));
         doThrow(new IllegalArgumentException("hidden"))
-                .when(registry).validateColumn(new QualifiedColumn(SOURCE, "district"));
+                .when(registry).describeColumns(any(), any());
         RecordMatchRequest req = groupedSingleSource(
                 List.of(new DisplayColumn("iceberg", "srse", "beneficiary", "district")),
                 List.of(new AggregateSpec(AggregateFunction.COUNT, null, false, null)),

@@ -1,5 +1,7 @@
 package gov.rajasthan.smart.srse.analysis;
 
+import gov.rajasthan.smart.srse.execution.JdbcStatements;
+import gov.rajasthan.smart.srse.execution.ScopedJdbc;
 import org.springframework.jdbc.core.ColumnMapRowMapper;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowCallbackHandler;
@@ -29,14 +31,15 @@ final class MatchExportStreamer {
             int queryTimeoutSeconds,
             RecordMatchService.MatchQuery query,
             RowSink sink) {
-        jdbc.setQueryTimeout(queryTimeoutSeconds);
+        JdbcTemplate timed = ScopedJdbc.withTimeout(jdbc, queryTimeoutSeconds);
         ColumnMapRowMapper rowMapper = new ColumnMapRowMapper();
         try {
-            jdbc.query(query.routedSql(), query.params().toArray(), (RowCallbackHandler) rs -> {
+            timed.query(query.routedSql(), query.params().toArray(), (RowCallbackHandler) rs -> {
                 Map<String, Object> row = rowMapper.mapRow(rs, 0);
                 try {
                     sink.accept(row);
                 } catch (IOException e) {
+                    JdbcStatements.cancel(rs.getStatement());
                     throw new UncheckedIOException(e);
                 }
             });
@@ -47,8 +50,8 @@ final class MatchExportStreamer {
 
     static long countRows(JdbcTemplate jdbc, int queryTimeoutSeconds, RecordMatchService.MatchQuery query) {
         String countSql = "SELECT count(*) FROM (" + query.routedSql() + ") export_row_count_inner";
-        jdbc.setQueryTimeout(queryTimeoutSeconds);
-        Long count = jdbc.queryForObject(countSql, query.params().toArray(), Long.class);
+        JdbcTemplate timed = ScopedJdbc.withTimeout(jdbc, queryTimeoutSeconds);
+        Long count = timed.queryForObject(countSql, query.params().toArray(), Long.class);
         return count == null ? 0L : count;
     }
 

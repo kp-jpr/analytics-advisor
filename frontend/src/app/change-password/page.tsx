@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { readApiErrorMessage } from "@/lib/apiError";
 import {
   clearAuthToken,
   fetchAuthSession,
@@ -57,7 +58,7 @@ export default function ChangePasswordPage() {
         return;
       }
       if (!res.ok) {
-        setError(await res.text());
+        setError(await readApiErrorMessage(res));
         return;
       }
       clearAuthToken();

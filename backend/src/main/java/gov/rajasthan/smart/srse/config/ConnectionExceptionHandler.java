@@ -10,7 +10,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 public class ConnectionExceptionHandler {
 
     @ExceptionHandler(ConnectionTestFailedException.class)
-    public ResponseEntity<String> badRequest(ConnectionTestFailedException ex) {
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ex.getMessage());
+    public ResponseEntity<ApiError> badRequest(ConnectionTestFailedException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiError.of("CONNECTION_FAILED", ex.getMessage()));
     }
 }

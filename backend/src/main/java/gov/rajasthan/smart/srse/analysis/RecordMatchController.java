@@ -183,7 +183,8 @@ public class RecordMatchController {
     public StreamingResponseBody matchMulti(@RequestBody MultiTargetRecordMatchRequest req) {
         AuditedMultiMatch audited = analysisAuditService.planMultiMatchAudited(req);
         return queryMonitor.trackStream(
-                audited.ticket(), multiMatchService.matchMulti(req, audited.ticket().probe()::failed));
+                audited.ticket(),
+                multiMatchService.matchMulti(req, audited.queries(), audited.ticket().probe()::failed));
     }
 
     /**
@@ -192,13 +193,13 @@ public class RecordMatchController {
     @PostMapping(value = "/match-multi.csv", produces = "text/csv")
     public ResponseEntity<StreamingResponseBody> matchMultiCsv(@RequestBody MultiTargetRecordMatchRequest req) {
         AuditedMultiMatch audited = analysisAuditService.planMultiMatchAudited(req);
-        String combinedShape = combinedMultiQueryShape(req);
+        String combinedShape = combinedMultiQueryShape(audited);
         try {
             analysisAuditService.recordMultiExport(req, combinedShape);
         } catch (RuntimeException ex) {
             throw new AuditWriteFailureException("Export audit row could not be written", ex);
         }
-        ResponseEntity<StreamingResponseBody> response = multiMatchService.matchMultiCsv(req);
+        ResponseEntity<StreamingResponseBody> response = multiMatchService.matchMultiCsv(req, audited.queries());
         StreamingResponseBody tracked = queryMonitor.trackStream(
                 audited.ticket().withKind(ActiveQueryKind.EXPORT), response.getBody());
         return ResponseEntity.status(response.getStatusCode())
@@ -206,12 +207,10 @@ public class RecordMatchController {
                 .body(tracked);
     }
 
-    private String combinedMultiQueryShape(MultiTargetRecordMatchRequest req) {
+    private String combinedMultiQueryShape(AuditedMultiMatch audited) {
         java.util.StringJoiner shapes = new java.util.StringJoiner("\n---\n");
-        if (req.targets() != null) {
-            for (TargetMatchSpec target : req.targets()) {
-                shapes.add(matchService.planMatch(MultiTargetRecordMatchService.toSingleMatch(req, target)).sql());
-            }
+        for (RecordMatchService.MatchQuery query : audited.queries()) {
+            shapes.add(query.sql());
         }
         return shapes.toString();
     }

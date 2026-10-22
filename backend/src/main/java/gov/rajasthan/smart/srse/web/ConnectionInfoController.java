@@ -4,11 +4,13 @@ import com.zaxxer.hikari.HikariDataSource;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.dao.DataAccessException;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import javax.sql.DataSource;
+import java.sql.SQLException;
 
 /**
  * Read-only admin view of the two data-plane connections (Tab 2's
@@ -62,7 +64,7 @@ public class ConnectionInfoController {
     private String checkOperational() {
         try (var conn = operational.getConnection()) {
             return conn.isValid(3) ? "up" : "unreachable";
-        } catch (Exception e) {
+        } catch (SQLException e) {
             return "error: " + e.getMessage();
         }
     }
@@ -71,7 +73,7 @@ public class ConnectionInfoController {
         try {
             presto.queryForObject("SELECT 1", Integer.class);
             return "up";
-        } catch (Exception e) {
+        } catch (DataAccessException e) {
             return "error: " + e.getMessage();
         }
     }

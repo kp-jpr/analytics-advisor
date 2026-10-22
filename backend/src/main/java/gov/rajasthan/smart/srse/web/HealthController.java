@@ -7,7 +7,10 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import org.springframework.dao.DataAccessException;
+
 import javax.sql.DataSource;
+import java.sql.SQLException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -59,7 +62,7 @@ public class HealthController {
     private String checkOperational() {
         try (var conn = operational.getConnection()) {
             return conn.isValid(3) ? "up" : "unreachable";
-        } catch (Exception e) {
+        } catch (SQLException e) {
             return "error: " + e.getMessage();
         }
     }
@@ -68,7 +71,7 @@ public class HealthController {
         try {
             presto.queryForObject("SELECT 1", Integer.class);
             return "up";
-        } catch (Exception e) {
+        } catch (DataAccessException e) {
             return "error: " + e.getMessage();
         }
     }

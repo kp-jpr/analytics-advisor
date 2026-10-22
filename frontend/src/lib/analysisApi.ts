@@ -10,6 +10,7 @@
 // layers. Officers pick through a four-level cascade that offers only what an
 // admin registered on the Admin page.
 
+import { readApiErrorMessage } from "@/lib/apiError";
 import {
   authorizedFetch as scopedAuthorizedFetch,
   type AuthScope,
@@ -221,6 +222,7 @@ export async function fetchColumnDistinctValues(
   ref: TableRef,
   column: string,
   search?: string,
+  signal?: AbortSignal,
 ): Promise<ColumnValuesResponse> {
   const res = await authorizedFetch(`${API_BASE}/api/analysis/column-values`, {
     method: "POST",
@@ -233,9 +235,10 @@ export async function fetchColumnDistinctValues(
       column,
       search: search || null,
     }),
+    signal,
   });
   if (!res.ok) {
-    throw new Error(`Analysis service error ${res.status}: ${await res.text()}`);
+    throw new Error(`Analysis service error ${res.status}: ${await readApiErrorMessage(res)}`);
   }
   return res.json() as Promise<ColumnValuesResponse>;
 }
@@ -277,7 +280,7 @@ export function fetchAnalysisLimits(): Promise<AnalysisLimits> {
 async function analysisGet<T>(path: string): Promise<T> {
   const res = await authorizedFetch(`${API_BASE}${path}`, { credentials: "include" });
   if (!res.ok) {
-    throw new Error(`Analysis service error ${res.status}: ${await res.text()}`);
+    throw new Error(`Analysis service error ${res.status}: ${await readApiErrorMessage(res)}`);
   }
   return res.json() as Promise<T>;
 }
@@ -378,11 +381,23 @@ export function listOverviewColumns(ref: TableRef): Promise<RegisteredColumn[]> 
   );
 }
 
+const analysisColumnCache = new Map<string, Promise<RegisteredColumn[]>>();
+
 export function listAnalysisColumns(ref: TableRef): Promise<RegisteredColumn[]> {
-  return analysisGet<RegisteredColumn[]>(
+  const key = `${ref.catalog}\u0000${ref.schema}\u0000${ref.table}`;
+  const cached = analysisColumnCache.get(key);
+  if (cached) {
+    return cached;
+  }
+  const pending = analysisGet<RegisteredColumn[]>(
     `/api/analysis/lakehouse/catalogs/${e(ref.catalog)}/schemas/${e(ref.schema)}` +
       `/tables/${e(ref.table)}/columns`,
-  );
+  ).catch((err: unknown) => {
+    analysisColumnCache.delete(key);
+    throw err;
+  });
+  analysisColumnCache.set(key, pending);
+  return pending;
 }
 
 export type ColumnMetadataStatus = {
@@ -410,15 +425,19 @@ export function fetchColumnMetadataStatus(ref: TableRef): Promise<ColumnMetadata
  * which is why this is on an explicit download click, never automatic.
  */
 /** Plans the match and returns display SQL — same query {@link runRecordMatchStream} would run. */
-export async function fetchMatchSql(req: RecordMatchRequest): Promise<string> {
+export async function fetchMatchSql(
+  req: RecordMatchRequest,
+  signal?: AbortSignal,
+): Promise<string> {
   const res = await authorizedFetch(`${API_BASE}/api/analysis/match.sql`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify(req),
+    signal,
   });
   if (!res.ok) {
-    throw new Error(`Analysis service error ${res.status}: ${await res.text()}`);
+    throw new Error(`Analysis service error ${res.status}: ${await readApiErrorMessage(res)}`);
   }
   return res.text();
 }
@@ -433,7 +452,7 @@ export async function fetchComparisonSummary(
     body: JSON.stringify(req),
   });
   if (!res.ok) {
-    throw new Error(`Analysis service error ${res.status}: ${await res.text()}`);
+    throw new Error(`Analysis service error ${res.status}: ${await readApiErrorMessage(res)}`);
   }
   return res.json() as Promise<ComparisonSummaryResponse>;
 }
@@ -458,7 +477,7 @@ export async function downloadRecordMatchExport(
     body: JSON.stringify(req),
   });
   if (!res.ok) {
-    throw new Error(`Analysis service error ${res.status}: ${await res.text()}`);
+    throw new Error(`Analysis service error ${res.status}: ${await readApiErrorMessage(res)}`);
   }
   return res.blob();
 }
@@ -493,7 +512,7 @@ export async function runRecordMatchStream(
     signal,
   });
   if (!res.ok) {
-    throw new Error(`Analysis service error ${res.status}: ${await res.text()}`);
+    throw new Error(`Analysis service error ${res.status}: ${await readApiErrorMessage(res)}`);
   }
   if (!res.body) {
     throw new Error("Analysis service error: streaming response has no body");
@@ -566,7 +585,7 @@ export async function runMultiTargetMatchStream(
     signal,
   });
   if (!res.ok) {
-    throw new Error(`Analysis service error ${res.status}: ${await res.text()}`);
+    throw new Error(`Analysis service error ${res.status}: ${await readApiErrorMessage(res)}`);
   }
   if (!res.body) {
     throw new Error("Analysis service error: streaming response has no body");
@@ -641,7 +660,7 @@ export async function downloadMultiTargetMatchCsv(req: MultiTargetRecordMatchReq
     body: JSON.stringify(req),
   });
   if (!res.ok) {
-    throw new Error(`Analysis service error ${res.status}: ${await res.text()}`);
+    throw new Error(`Analysis service error ${res.status}: ${await readApiErrorMessage(res)}`);
   }
   return res.blob();
 }
@@ -682,7 +701,7 @@ export type CompareAs = "AUTO" | "NUMBER" | "TEXT" | "DATE";
 export async function listColumnMetadata(scope: AuthScope = "officer"): Promise<ColumnMetadata[]> {
   const res = await authorizedFetch(`${API_BASE}/api/analysis/column-metadata`, { credentials: "include" }, scope);
   if (!res.ok) {
-    throw new Error(`Analysis service error ${res.status}: ${await res.text()}`);
+    throw new Error(`Analysis service error ${res.status}: ${await readApiErrorMessage(res)}`);
   }
   return res.json();
 }
@@ -700,7 +719,7 @@ export async function deleteColumnMetadata(ref: TableRef, column: string): Promi
     credentials: "include",
   }, "admin");
   if (!res.ok) {
-    throw new Error(`Analysis service error ${res.status}: ${await res.text()}`);
+    throw new Error(`Analysis service error ${res.status}: ${await readApiErrorMessage(res)}`);
   }
 }
 
@@ -721,7 +740,7 @@ export async function upsertColumnMetadata(
     body: JSON.stringify({ ...ref, column, businessName, fuzzyMatchable, visible, compareAs, valuePickerEnabled }),
   }, "admin");
   if (!res.ok) {
-    throw new Error(`Analysis service error ${res.status}: ${await res.text()}`);
+    throw new Error(`Analysis service error ${res.status}: ${await readApiErrorMessage(res)}`);
   }
   return res.json();
 }
@@ -750,7 +769,7 @@ export async function suggestJoinKeys(req: {
     body: JSON.stringify({ ...req, probe: req.probe ?? false }),
   });
   if (!res.ok) {
-    throw new Error(`Suggest keys failed ${res.status}: ${await res.text()}`);
+    throw new Error(`Suggest keys failed ${res.status}: ${await readApiErrorMessage(res)}`);
   }
   return res.json();
 }

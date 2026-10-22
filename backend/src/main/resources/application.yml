@@ -76,6 +76,7 @@ srse:
   guardrails:
     cohort-cap: ${SRSE_COHORT_CAP:1000}
     query-timeout-seconds: ${SRSE_QUERY_TIMEOUT_SECONDS:180}
+    metadata-timeout-seconds: ${SRSE_METADATA_TIMEOUT_SECONDS:15}
     preview-sample-size: ${SRSE_PREVIEW_SAMPLE_SIZE:50}
   audit:
     # Immediate peers (load balancers) allowed to supply X-Forwarded-For.

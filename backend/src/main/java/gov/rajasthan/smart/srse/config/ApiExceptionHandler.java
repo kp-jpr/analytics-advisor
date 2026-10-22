@@ -22,28 +22,33 @@ public class ApiExceptionHandler {
      * generic 500; found via live testing of the FUZZY_MATCH threshold guard.
      */
     @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<String> badRequest(IllegalArgumentException ex) {
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ex.getMessage());
+    public ResponseEntity<ApiError> badRequest(IllegalArgumentException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiError.of("VALIDATION", ex.getMessage()));
     }
 
     @ExceptionHandler(SavedQueryPayloadException.class)
-    public ResponseEntity<String> savedQueryPayload(SavedQueryPayloadException ex) {
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ex.getMessage());
+    public ResponseEntity<ApiError> savedQueryPayload(SavedQueryPayloadException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiError.of("VALIDATION", ex.getMessage()));
     }
 
     @ExceptionHandler(IllegalStateException.class)
-    public ResponseEntity<String> conflict(IllegalStateException ex) {
-        return ResponseEntity.status(HttpStatus.CONFLICT).body(ex.getMessage());
+    public ResponseEntity<ApiError> conflict(IllegalStateException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiError.of("CONFLICT", ex.getMessage()));
     }
 
     @ExceptionHandler(AdminAccessDeniedException.class)
-    public ResponseEntity<String> forbidden(AdminAccessDeniedException ex) {
-        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ex.getMessage());
+    public ResponseEntity<ApiError> forbidden(AdminAccessDeniedException ex) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(ApiError.of("FORBIDDEN", ex.getMessage()));
     }
 
     /** Export audit row must commit before streaming — refusal if the write fails (§7.3 Q6). */
     @ExceptionHandler(AuditWriteFailureException.class)
-    public ResponseEntity<String> auditWriteFailed(AuditWriteFailureException ex) {
-        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(ex.getMessage());
+    public ResponseEntity<ApiError> auditWriteFailed(AuditWriteFailureException ex) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(ApiError.of("AUDIT_UNAVAILABLE", ex.getMessage()));
     }
 }
