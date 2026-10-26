@@ -908,7 +908,8 @@ public class RecordMatchService {
         ScopeFilteredFrom targetScope = applySideRules(
                 scopeFrom.planFrom(sides.targetTable()), req.targetRules(), sides.targetTable(),
                 sides.targetColumns()).scope();
-        List<ScopeFilteredFrom> extraScopes = planAdditionalScopes(req);
+        List<PlannedExtra> plannedExtras = planAdditionalTables(req);
+        List<ScopeFilteredFrom> extraScopes = plannedExtras.stream().map(PlannedExtra::scope).toList();
         enforceEstimatedRowCeiling(
                 sides, groups, sourceScope, targetScope, req.grouped(),
                 req.additionalJoins(), extraScopes);
@@ -956,7 +957,7 @@ public class RecordMatchService {
         String sourceFrom = fromSide(sourceScope, "src", sourceUnnests, scopeParams);
         String targetFrom = fromSide(targetScope, "tgt", targetUnnests, scopeParams);
         StringBuilder extraJoins = new StringBuilder();
-        appendAdditionalJoins(req, sides, select, outerColumns, extraJoins, scopeParams, extraScopes);
+        appendAdditionalJoins(req, sides, select, outerColumns, extraJoins, scopeParams, plannedExtras);
         String baseSql = "SELECT " + select + " FROM " + sourceFrom + " " + joinType.joinKeyword() + " "
                 + targetFrom + " ON " + onClause + extraJoins + " WHERE " + where;
 
@@ -975,24 +976,46 @@ public class RecordMatchService {
         return new MatchQuery(finalSql, allParams, List.copyOf(outerColumns));
     }
 
-    /** Scope for each additional table, planned once and reused by the fan-out guard and the SQL. */
-    private List<ScopeFilteredFrom> planAdditionalScopes(RecordMatchRequest req) {
+    /** One extra table described once, with its rules already compiled into the scope. */
+    private record PlannedExtra(ScopeFilteredFrom scope, Map<String, RegisteredColumn> columns) {}
+
+    /** Row and distinct counts for one extra table, used only when its join is not inner. */
+    private record ExtraFanOut(JoinType joinType, long extraRows, long groupMax) {}
+
+    /**
+     * Scope for each additional table, planned once and reused by the fan-out
+     * guard and the SQL. The same describe covers the join column, the columns
+     * to show, and every rule column.
+     */
+    private List<PlannedExtra> planAdditionalTables(RecordMatchRequest req) {
         if (req.additionalJoins().isEmpty()) {
             return List.of();
         }
-        List<ScopeFilteredFrom> scopes = new ArrayList<>(req.additionalJoins().size());
+        List<PlannedExtra> planned = new ArrayList<>(req.additionalJoins().size());
         for (AdditionalJoin extra : req.additionalJoins()) {
-            scopes.add(scopeFrom.planFrom(extra.qualifiedTable()));
+            QualifiedTable table = extra.qualifiedTable();
+            LinkedHashSet<String> names = new LinkedHashSet<>();
+            names.add(extra.joinColumn());
+            names.addAll(extra.displayColumns());
+            if (extra.rules() != null) {
+                List<String> ruleColumns = new ArrayList<>();
+                collectRuleColumns(extra.rules().root(), table, ruleColumns);
+                names.addAll(ruleColumns);
+            }
+            Map<String, RegisteredColumn> described = registry.describeColumns(table, List.copyOf(names));
+            ScopeFilteredFrom scope = applySideRules(
+                    scopeFrom.planFrom(table), extra.rules(), table, described).scope();
+            planned.add(new PlannedExtra(scope, described));
         }
-        return scopes;
+        return planned;
     }
 
     /**
-     * Further tables inner-joined to the source. An empty list leaves the
-     * two-table SQL unchanged. Each extra table is described once, scoped the
-     * same way as the primary sides, and projected under {@code extraN_}.
-     * The equality uses the same type alignment as the primary join so a
-     * varchar/bigint pair stays a hash join instead of failing at execution.
+     * Further tables joined to the source. An empty list leaves the two-table
+     * SQL unchanged. A null join type stays {@code INNER JOIN}. Each extra
+     * table is described once, rules sit inside its derived table, and columns
+     * are projected under {@code extraN_}. The equality uses the same type
+     * alignment as the primary join so a varchar/bigint pair stays a hash join.
      */
     private void appendAdditionalJoins(
             RecordMatchRequest req,
@@ -1001,7 +1024,7 @@ public class RecordMatchService {
             Set<String> outerColumns,
             StringBuilder extraJoinSql,
             List<Object> scopeParams,
-            List<ScopeFilteredFrom> extraScopes) {
+            List<PlannedExtra> plannedExtras) {
         if (req.additionalJoins().isEmpty() || req.grouped()) {
             return;
         }
@@ -1009,18 +1032,12 @@ public class RecordMatchService {
         for (int i = 0; i < req.additionalJoins().size(); i++) {
             AdditionalJoin extra = req.additionalJoins().get(i);
             String alias = "x" + n;
-            List<String> names = new ArrayList<>();
-            names.add(extra.joinColumn());
-            for (String column : extra.displayColumns()) {
-                if (!names.contains(column)) {
-                    names.add(column);
-                }
-            }
-            Map<String, RegisteredColumn> described = registry.describeColumns(extra.qualifiedTable(), names);
-            ScopeFilteredFrom scope = extraScopes.get(i);
-            TypeCoercion.Aligned aligned = alignAdditionalJoin(sides, extra, alias, described);
-            extraJoinSql.append(" INNER JOIN ")
-                    .append(fromSide(scope, alias, List.of(), scopeParams))
+            PlannedExtra planned = plannedExtras.get(i);
+            TypeCoercion.Aligned aligned = alignAdditionalJoin(sides, extra, alias, planned.columns());
+            JoinType extraType = extra.effectiveJoinType();
+            String keyword = extraType == JoinType.INNER ? "INNER JOIN" : extraType.joinKeyword();
+            extraJoinSql.append(' ').append(keyword).append(' ')
+                    .append(fromSide(planned.scope(), alias, List.of(), scopeParams))
                     .append(" ON ").append(aligned.left()).append(" = ").append(aligned.right());
             String joinOut = "extra" + n + "_" + extra.joinColumn();
             if (!outerColumns.contains(joinOut)) {
@@ -1588,8 +1605,13 @@ public class RecordMatchService {
                 return;
             }
         }
+        long primaryNumerator = numerator;
+        long primaryDenominator = denominator;
+        List<ExtraFanOut> outerFactors = List.of();
+        boolean anyOuter = false;
         if (!additionalJoins.isEmpty()) {
             Map<String, Long> sourceDistinctByColumn = new java.util.HashMap<>();
+            outerFactors = new ArrayList<>(additionalJoins.size());
             for (int i = 0; i < additionalJoins.size(); i++) {
                 AdditionalJoin extra = additionalJoins.get(i);
                 ScopeFilteredFrom extraScope = extraScopes.get(i);
@@ -1618,6 +1640,11 @@ public class RecordMatchService {
                 if (groupMax <= 0) {
                     return;
                 }
+                JoinType extraType = extra.effectiveJoinType();
+                if (extraType != JoinType.INNER) {
+                    anyOuter = true;
+                }
+                outerFactors.add(new ExtraFanOut(extraType, extraRows, groupMax));
                 numerator = multiplyCap(numerator, extraRows, Long.MAX_VALUE);
                 if (numerator <= 0) {
                     return;
@@ -1631,6 +1658,9 @@ public class RecordMatchService {
         long estimate = numerator / denominator;
         if (numerator == Long.MAX_VALUE || estimate < 0) {
             estimate = ceiling + 1;
+        }
+        if (anyOuter) {
+            estimate = outerExtraEstimate(primaryNumerator, primaryDenominator, outerFactors, ceiling);
         }
         if (estimate > ceiling) {
             String scopeNote = scopeEstimateNote(sourceScope, targetScope);
@@ -1651,6 +1681,36 @@ public class RecordMatchService {
                             + "Try a longer blocking prefix (SRSE_ANALYSIS_BLOCKING_PREFIX_LEN), "
                             + "a more selective join key, or fewer folded groups.");
         }
+    }
+
+    /**
+     * Outer extra joins cannot drop the side they preserve. Inner extras keep
+     * the single division above. Left keeps at least the prior estimate, right
+     * keeps at least the extra table, and full keeps both.
+     */
+    private static long outerExtraEstimate(
+            long primaryNumerator,
+            long primaryDenominator,
+            List<ExtraFanOut> factors,
+            long ceiling) {
+        long running = primaryNumerator / primaryDenominator;
+        if (primaryNumerator == Long.MAX_VALUE || running < 0) {
+            running = ceiling + 1;
+        }
+        for (ExtraFanOut factor : factors) {
+            long productNum = multiplyCap(running, factor.extraRows(), Long.MAX_VALUE);
+            long product = productNum / factor.groupMax();
+            if (productNum == Long.MAX_VALUE || product < 0) {
+                product = ceiling + 1;
+            }
+            running = switch (factor.joinType()) {
+                case LEFT -> Math.max(running, product);
+                case RIGHT -> Math.max(product, factor.extraRows());
+                case FULL -> Math.max(Math.max(running, product), factor.extraRows());
+                default -> product;
+            };
+        }
+        return running;
     }
 
     private static String scopeEstimateNote(ScopeFilteredFrom sourceScope, ScopeFilteredFrom targetScope) {

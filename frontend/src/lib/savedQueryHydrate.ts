@@ -252,6 +252,19 @@ function basicRuleRow(node: PredicateNodeWire): ExtractRuleRow | null {
   };
 }
 
+/** A single basic predicate or an AND group. Extra-table rules are stored either way. */
+function additionalRuleRowsFromSpec(spec: PredicateSpecWire | null | undefined): ExtractRuleRow[] {
+  const root = spec?.root;
+  if (!root) {
+    return [];
+  }
+  if (root.type === "PREDICATE") {
+    const row = basicRuleRow(root);
+    return row ? [row] : [];
+  }
+  return basicRuleRowsFromSpec(spec);
+}
+
 /** AND-group children become basic rows. A single predicate, an OR group, or an IN/fuzzy child does not. */
 function basicRuleRowsFromSpec(spec: PredicateSpecWire | null | undefined): ExtractRuleRow[] {
   const root = spec?.root;
@@ -319,6 +332,8 @@ export function hydrateExtractConfigFromRequest(req: RecordMatchRequest): Extrac
       sourceColumn: join.sourceColumn,
       joinColumn: join.joinColumn,
       displayCols: join.displayColumns ?? [],
+      joinType: join.joinType ?? "INNER",
+      ruleRows: additionalRuleRowsFromSpec(join.rules),
     })),
   };
 }

@@ -190,6 +190,10 @@ export type AdditionalJoin = {
   sourceColumn: string;
   joinColumn: string;
   displayColumns?: string[];
+  /** Omitted when the join is inner, which is the default. */
+  joinType?: JoinType;
+  /** Basic rules applied inside this table before the join. */
+  rules?: PredicateSpecWire | null;
 };
 
 export type HubSide = "SOURCE" | "TARGET";

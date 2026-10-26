@@ -261,14 +261,22 @@ function additionalJoinsFrom(tables: AdditionalTableConfig[] | undefined): Addit
   for (const row of tables) {
     const ref = refAsTable(row.ref);
     if (!ref || !row.sourceColumn || !row.joinColumn) return null;
-    joins.push({
+    const join: AdditionalJoin = {
       catalog: ref.catalog,
       schema: ref.schema,
       table: ref.table,
       sourceColumn: row.sourceColumn,
       joinColumn: row.joinColumn,
       displayColumns: row.displayCols ?? [],
-    });
+    };
+    if (row.joinType && row.joinType !== "INNER") {
+      join.joinType = row.joinType;
+    }
+    const rules = buildRulesFromRows(ref, row.ruleRows ?? []);
+    if (rules) {
+      join.rules = rules;
+    }
+    joins.push(join);
   }
   return joins;
 }

@@ -34,15 +34,22 @@ export function BasicRuleListEditor({
   columns,
   rows,
   onChange,
+  idPrefix,
+  sideLabel: sideLabelOverride,
 }: Readonly<{
   side: "source" | "target";
   tableRef: CascadeValue;
   columns: RegisteredColumn[];
   rows: ExtractRuleRow[];
   onChange: (next: ExtractRuleRow[]) => void;
+  /** Keeps control ids unique when more than one list uses the same side. */
+  idPrefix?: string;
+  /** Spoken name for this list. Extra tables pass their own table label. */
+  sideLabel?: string;
 }>) {
   const { t } = useShell();
-  const sideLabel = side === "source" ? t("basicRuleSideSource") : t("basicRuleSideTarget");
+  const sideLabel = sideLabelOverride ?? (side === "source" ? t("basicRuleSideSource") : t("basicRuleSideTarget"));
+  const controlPrefix = idPrefix ?? side;
   const canAddRule = columns.length > 0;
 
   function addRule() {
@@ -111,9 +118,9 @@ export function BasicRuleListEditor({
         rows.map((row, index) => {
           const n = index + 1;
           const needsValue = BASIC_RULE_OPS.find((item) => item.value === row.operator)?.needsValue ?? true;
-          const columnId = `basic-rule-${side}-${row.id}-column`;
-          const operatorId = `basic-rule-${side}-${row.id}-operator`;
-          const valueId = `basic-rule-${side}-${row.id}-value`;
+          const columnId = `basic-rule-${controlPrefix}-${row.id}-column`;
+          const operatorId = `basic-rule-${controlPrefix}-${row.id}-operator`;
+          const valueId = `basic-rule-${controlPrefix}-${row.id}-value`;
           return (
             <div
               key={row.id}

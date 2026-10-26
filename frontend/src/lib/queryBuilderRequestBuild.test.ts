@@ -121,6 +121,8 @@ describe("ordinary source rules", () => {
           sourceColumn: "m_id",
           joinColumn: "m_id",
           displayCols: ["village_name"],
+          joinType: "INNER",
+          ruleRows: [],
         },
       ],
     });
@@ -147,11 +149,60 @@ describe("ordinary source rules", () => {
               sourceColumn: "m_id",
               joinColumn: "",
               displayCols: [],
+              joinType: "INNER",
+              ruleRows: [],
             },
           ],
         }),
       ),
     ).toBeNull();
+  });
+
+  it("round-trips an extra table join type and one rule, and omits an inner join type", () => {
+    const village = { catalog: "iceberg", schema: "srse", table: "village" };
+    const configured = extract({
+      additionalTables: [
+        {
+          id: "extra-1",
+          ref: village,
+          sourceColumn: "m_id",
+          joinColumn: "m_id",
+          displayCols: ["village_name"],
+          joinType: "LEFT",
+          ruleRows: [{ id: "r1", column: "village_name", operator: "EQ", value: "Jaipur" }],
+        },
+      ],
+    });
+    const req = buildExtractRequest(true, configured)!;
+    expect(req.additionalJoins?.[0]?.joinType).toBe("LEFT");
+    expect(req.additionalJoins?.[0]?.rules?.root).toMatchObject({
+      type: "PREDICATE",
+      operator: "EQ",
+      value: "Jaipur",
+      column: { column: "village_name", table: village },
+    });
+    const restored = hydrateExtractConfigFromRequest(req);
+    expect(restored.additionalTables[0]?.joinType).toBe("LEFT");
+    expect(restored.additionalTables[0]?.ruleRows).toEqual([
+      expect.objectContaining({ column: "village_name", operator: "EQ", value: "Jaipur" }),
+    ]);
+    expect(buildExtractRequest(true, restored)!.additionalJoins).toEqual(req.additionalJoins);
+
+    const inner = buildExtractRequest(true, extract({
+      additionalTables: [
+        {
+          id: "extra-1",
+          ref: village,
+          sourceColumn: "m_id",
+          joinColumn: "m_id",
+          displayCols: ["village_name"],
+          joinType: "INNER",
+          ruleRows: [],
+        },
+      ],
+    }))!;
+    expect(inner.additionalJoins?.[0]).not.toHaveProperty("joinType");
+    expect(inner.additionalJoins?.[0]).not.toHaveProperty("rules");
   });
 
   it("maps destination attributes separately and still requires a join key", () => {

@@ -1,5 +1,6 @@
 package gov.rajasthan.smart.srse.analysis;
 
+import gov.rajasthan.smart.srse.compiler.Ast;
 import gov.rajasthan.smart.srse.compiler.CompareAs;
 import gov.rajasthan.smart.srse.execution.GuardrailProperties;
 import gov.rajasthan.smart.srse.lakehouse.AnalysisScopeFromService;
@@ -1235,6 +1236,63 @@ class RecordMatchServiceTest {
                 "INNER JOIN " + qualified("village") + " x1 ON src.district = x1.district_code"), sql);
         assertTrue(sql.contains("x1.village_name AS \"extra1_village_name\""), sql);
         assertFalse(sql.contains(" x2 "), sql);
+    }
+
+    @Test
+    void leftAdditionalJoinKeepsItsRuleInsideTheTable() {
+        lenient().when(ruleCompiler.compile(any(), any(), any()))
+                .thenReturn(new gov.rajasthan.smart.srse.compiler.CompiledQuery(
+                        "t.district_code > ?", List.of(10)));
+        Ast.PredicateSpec rules = new Ast.PredicateSpec(new Ast.PredicateNode(
+                new QualifiedColumn(CATALOG, SCHEMA, "village", "district_code"),
+                Ast.Operator.GT, 10));
+        AdditionalJoin village = new AdditionalJoin(
+                CATALOG, SCHEMA, "village", "district", "district_code",
+                List.of("village_name"), JoinType.LEFT, rules);
+        RecordMatchService.MatchQuery query = service.planMatch(new RecordMatchRequest(
+                List.of(exact("beneficiary", "district")),
+                List.of(exact("bank", "district")),
+                null, null, List.of(), false, null, null, List.of(), false,
+                null, null, false, List.of(), List.of(), null, false,
+                List.of(village)));
+        String sql = query.sql();
+        assertTrue(sql.contains("LEFT JOIN"), sql);
+        assertTrue(sql.contains(
+                "(SELECT * FROM " + qualified("village") + " t WHERE t.district_code > ?) x1"), sql);
+        assertTrue(sql.contains(
+                "ON src.district = x1.district_code"), sql);
+        assertEquals(1, countOccurrences(sql, "?"), sql);
+        assertEquals(List.of(10), query.params());
+        verify(scopeFrom, times(1)).planFrom(eq(new QualifiedTable(CATALOG, SCHEMA, "village")));
+    }
+
+    @Test
+    void ruledAdditionalTableIsCountedWithItsFilterAndAnUnruledTableUsesCatalogStats() throws Exception {
+        stubCatalogStats("district", 1_000L, 1_000L);
+        lenient().when(ruleCompiler.compile(any(), any(), any()))
+                .thenReturn(new gov.rajasthan.smart.srse.compiler.CompiledQuery(
+                        "t.district_code > ?", List.of(10)));
+        lenient().when(jdbc.queryForObject(anyString(), any(Object[].class), eq(Long.class))).thenReturn(100L);
+        Ast.PredicateSpec rules = new Ast.PredicateSpec(new Ast.PredicateNode(
+                new QualifiedColumn(CATALOG, SCHEMA, "village", "district_code"),
+                Ast.Operator.GT, 10));
+        AdditionalJoin village = new AdditionalJoin(
+                CATALOG, SCHEMA, "village", "district", "district_code", List.of(), null, rules);
+        assertDoesNotThrow(() -> service.planMatch(new RecordMatchRequest(
+                List.of(exact("beneficiary", "district")),
+                List.of(exact("bank", "district")),
+                null, null, List.of(), false, null, null, List.of(), false,
+                null, null, false, List.of(), List.of(), null, false,
+                List.of(village))));
+        ArgumentCaptor<String> counted = ArgumentCaptor.forClass(String.class);
+        verify(jdbc, atLeastOnce()).queryForObject(counted.capture(), any(Object[].class), eq(Long.class));
+        assertTrue(counted.getAllValues().stream().anyMatch(sql ->
+                sql.contains("count(*)") && sql.contains("village") && sql.contains("t.district_code > ?")),
+                counted.getAllValues().toString());
+        ArgumentCaptor<String> stats = ArgumentCaptor.forClass(String.class);
+        verify(jdbc, atLeastOnce()).query(stats.capture(), any(RowCallbackHandler.class));
+        assertTrue(stats.getAllValues().stream().noneMatch(sql -> sql.contains("village")),
+                stats.getAllValues().toString());
     }
 
     @Test

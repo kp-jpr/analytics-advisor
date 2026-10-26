@@ -202,6 +202,8 @@ function AdditionalJoinTables({
                 sourceColumn: defaultSourceColumn,
                 joinColumn: "",
                 displayCols: [],
+                joinType: "INNER",
+                ruleRows: [],
               },
             ])
           }
@@ -248,8 +250,13 @@ function AdditionalJoinRow({
       const latest = rowRef.current;
       const displayCols = retainValidDisplayColumns(latest.displayCols, names);
       const joinColumn = latest.joinColumn && names.includes(latest.joinColumn) ? latest.joinColumn : "";
-      if (displayCols.length !== latest.displayCols.length || joinColumn !== latest.joinColumn) {
-        onChangeRef.current({ displayCols, joinColumn });
+      const ruleRows = (latest.ruleRows ?? []).filter((rule) => names.includes(rule.column));
+      if (
+        displayCols.length !== latest.displayCols.length
+        || joinColumn !== latest.joinColumn
+        || ruleRows.length !== (latest.ruleRows ?? []).length
+      ) {
+        onChangeRef.current({ displayCols, joinColumn, ruleRows });
       }
     });
     return () => {
@@ -275,7 +282,7 @@ function AdditionalJoinRow({
         <LakehouseCascade
           idPrefix={`extract-extra-${row.id}`}
           value={row.ref}
-          onChange={(ref) => onChange({ ref, joinColumn: "", displayCols: [] })}
+          onChange={(ref) => onChange({ ref, joinColumn: "", displayCols: [], ruleRows: [] })}
           fetchers={REGISTRY_FETCHERS}
           appearance="prototype"
         />
@@ -314,6 +321,21 @@ function AdditionalJoinRow({
       </div>
       {isCascadeComplete(row.ref) ? (
         <div className="pick" style={{ marginTop: 12 }}>
+          <div className="field" style={{ maxWidth: 360, marginBottom: 12 }}>
+            <label htmlFor={`extract-extra-join-${row.id}`}>{t("qbExtraJoinType")}</label>
+            <select
+              id={`extract-extra-join-${row.id}`}
+              aria-label={`${label} ${t("qbExtraJoinType")}`}
+              value={row.joinType ?? "INNER"}
+              onChange={(e) => onChange({ joinType: e.target.value as JoinType })}
+            >
+              {JOIN_TYPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="ttl">{t("qbExtraAttrs")}</div>
           <AttributeMultiSelect
             id={`extract-extra-attrs-${row.id}`}
@@ -321,6 +343,16 @@ function AdditionalJoinRow({
             columns={columns}
             selected={row.displayCols}
             onChange={(displayCols) => onChange({ displayCols })}
+          />
+          <div className="ttl" style={{ marginTop: 12 }}>{t("qbExtraRules")}</div>
+          <BasicRuleListEditor
+            side="target"
+            idPrefix={`extra-${row.id}`}
+            sideLabel={label}
+            tableRef={row.ref}
+            columns={columns}
+            rows={row.ruleRows ?? []}
+            onChange={(ruleRows) => onChange({ ruleRows })}
           />
         </div>
       ) : null}

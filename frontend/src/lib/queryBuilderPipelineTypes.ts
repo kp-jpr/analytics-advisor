@@ -67,6 +67,10 @@ export type AdditionalTableConfig = {
   sourceColumn: string;
   joinColumn: string;
   displayCols: string[];
+  /** Null or INNER on the wire is an inner join. The card always stores a value. */
+  joinType: JoinType;
+  /** Basic row rules compiled inside this table before it is joined. */
+  ruleRows: ExtractRuleRow[];
 };
 
 /** How many further tables can be joined beyond the source and destination. */

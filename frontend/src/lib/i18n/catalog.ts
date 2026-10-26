@@ -179,6 +179,8 @@ export const I18N = {
     qbExtraSourceKey: "Source column",
     qbExtraJoinKey: "Column on this table",
     qbExtraAttrs: "Columns to show",
+    qbExtraJoinType: "Join type",
+    qbExtraRules: "Rules on this table",
     qbRemoveTable: "Remove table",
     loginWelcome: "Sign in to Analytics Advisor",
     loginLead:
@@ -372,6 +374,8 @@ export const I18N = {
     qbExtraSourceKey: "स्रोत कॉलम",
     qbExtraJoinKey: "इस तालिका का कॉलम",
     qbExtraAttrs: "दिखाने वाले कॉलम",
+    qbExtraJoinType: "जॉइन प्रकार",
+    qbExtraRules: "इस तालिका के नियम",
     qbRemoveTable: "तालिका हटाएँ",
     loginWelcome: "Analytics Advisor में साइन इन करें",
     loginLead:
