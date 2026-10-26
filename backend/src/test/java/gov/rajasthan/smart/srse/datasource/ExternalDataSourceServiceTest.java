@@ -18,6 +18,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
 import java.sql.SQLException;
 import java.util.Optional;
 
@@ -163,22 +165,42 @@ class ExternalDataSourceServiceTest {
     }
 
     @Test
-    void onlyPostgresqlAndDb2AreOffered() {
+    void offeredTypesIncludeTheSixSupportedEngines() {
         var offered = service.supportedTypes().stream().map(t -> t.code()).toList();
-        assertEquals(java.util.List.of("POSTGRESQL", "DB2"), offered);
+        assertEquals(
+                java.util.List.of("POSTGRESQL", "DB2", "MYSQL", "MARIADB", "SQLSERVER", "ORACLE"),
+                offered);
     }
 
     @ParameterizedTest
     @ValueSource(strings = {"MYSQL", "mariadb", "SQLSERVER", "Oracle"})
-    void dormantTypesAreRefusedByTheApiNotJustHiddenInTheDropdown(String type) throws Exception {
+    void mysqlMariaDbSqlServerAndOracleCanBeCreated(String type) throws Exception {
+        when(repository.findByNameIgnoreCase("Legacy")).thenReturn(Optional.empty());
+        when(secretCodec.encrypt(SECRET)).thenReturn("ciphertext-value");
+        Connection connection = org.mockito.Mockito.mock(Connection.class);
+        DatabaseMetaData metadata = org.mockito.Mockito.mock(DatabaseMetaData.class);
+        when(jdbcAccess.open(any(), eq(SECRET))).thenReturn(connection);
+        when(connection.isValid(8)).thenReturn(true);
+        when(connection.getMetaData()).thenReturn(metadata);
+        when(metadata.getDatabaseProductName()).thenReturn("TestDB");
+        when(metadata.getDatabaseProductVersion()).thenReturn("1");
+        when(repository.save(any())).thenAnswer(invocation -> {
+            ExternalDataSource saved = invocation.getArgument(0);
+            ReflectionTestUtils.setField(saved, "id", 21L);
+            return saved;
+        });
+        when(registeredTables.countByExternalDataSourceId(21L)).thenReturn(0L);
+
         var request = new ExternalDataSourceDtos.CreateRequest(
                 "Legacy", type, "db.internal", null, "app", "reader", SECRET, false, null);
 
-        var failure = assertThrows(IllegalArgumentException.class, () -> service.create(request));
+        var created = service.create(request);
 
-        assertTrue(failure.getMessage().contains("not supported"), failure.getMessage());
-        verify(repository, never()).save(any());
-        verify(jdbcAccess, never()).open(any(), any());
+        assertEquals(type.trim().toUpperCase(java.util.Locale.ROOT), created.databaseType());
+        assertTrue(created.federationCapable());
+        assertTrue(created.jdbcUrl().startsWith("jdbc:"));
+        verify(repository).save(any());
+        verify(jdbcAccess).open(any(), eq(SECRET));
     }
 
     private static ExternalDataSource source() {

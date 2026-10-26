@@ -1,25 +1,25 @@
 package gov.rajasthan.smart.srse.datasource;
 
+import java.util.Arrays;
 import java.util.Locale;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * JDBC source types bundled with this release. Add drivers here, never from browser uploads.
  *
- * <p>Only {@link #supported()} types may be connected (PRODUCT_PLAN decision 0.13:
- * PostgreSQL, DB2 and the Lakehouse). The other four are dormant — kept so their
- * URL builders and SQL adaptation are not lost, but neither offered in Admin nor
- * accepted by the API, and not covered by any verification.
+ * <p>Only {@link #supported()} types may be connected. PostgreSQL, DB2, MySQL, MariaDB,
+ * SQL Server, and Oracle are offered. DB2 stays direct-only because PrestoDB has no DB2 connector.
  */
 public enum ExternalDataSourceType {
     POSTGRESQL("PostgreSQL", 5432, "org.postgresql.Driver", true, true),
     // PrestoDB 0.297 ships no DB2 connector (verified against its plugin directory), so a DB2 source can
     // never be given a Presto catalog alias: it answers plain single-source questions only.
     DB2("IBM DB2", 50000, "com.ibm.db2.jcc.DB2Driver", true, false),
-    MYSQL("MySQL", 3306, "com.mysql.cj.jdbc.Driver", false, true),
-    MARIADB("MariaDB", 3306, "org.mariadb.jdbc.Driver", false, true),
-    SQLSERVER("Microsoft SQL Server", 1433, "com.microsoft.sqlserver.jdbc.SQLServerDriver", false, true),
-    ORACLE("Oracle", 1521, "oracle.jdbc.OracleDriver", false, true);
+    MYSQL("MySQL", 3306, "com.mysql.cj.jdbc.Driver", true, true),
+    MARIADB("MariaDB", 3306, "org.mariadb.jdbc.Driver", true, true),
+    SQLSERVER("Microsoft SQL Server", 1433, "com.microsoft.sqlserver.jdbc.SQLServerDriver", true, true),
+    ORACLE("Oracle", 1521, "oracle.jdbc.OracleDriver", true, true);
 
     private static final Pattern SAFE_HOST = Pattern.compile("^[A-Za-z0-9._:-]+$");
     private static final Pattern SAFE_DATABASE = Pattern.compile("^[A-Za-z0-9._-]+$");
@@ -47,7 +47,7 @@ public enum ExternalDataSourceType {
         return federationCapable;
     }
 
-    /** False for dormant types (decision 0.13): not offered, and refused on create. */
+    /** False when a bundled type must stay hidden and be refused on create. */
     public boolean supported() {
         return supported;
     }
@@ -132,8 +132,12 @@ public enum ExternalDataSourceType {
     public static ExternalDataSourceType parseSupported(String value) {
         ExternalDataSourceType type = parse(value);
         if (!type.supported()) {
+            String offered = Arrays.stream(values())
+                    .filter(ExternalDataSourceType::supported)
+                    .map(ExternalDataSourceType::label)
+                    .collect(Collectors.joining(", "));
             throw new IllegalArgumentException(
-                    type.label() + " connections are not supported in this release. Supported: PostgreSQL, IBM DB2.");
+                    type.label() + " connections are not supported in this release. Supported: " + offered + ".");
         }
         return type;
     }
