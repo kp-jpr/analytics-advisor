@@ -171,6 +171,15 @@ export const I18N = {
     qbSaveAs: "Save as…",
     qbSaveQuery: "Save query",
     qbOpenSaved: "Open saved query…",
+    qbAdditionalTables: "Additional tables",
+    qbAdditionalTablesDesc:
+      "Join more tables into this same query. Each one matches the source on an exact column. Up to {max} additional tables. Grouping stays off while extra tables are attached.",
+    qbAddTable: "Add another table",
+    qbExtraTable: "Table {n}",
+    qbExtraSourceKey: "Source column",
+    qbExtraJoinKey: "Column on this table",
+    qbExtraAttrs: "Columns to show",
+    qbRemoveTable: "Remove table",
     loginWelcome: "Sign in to Analytics Advisor",
     loginLead:
       "Use your authorized credentials to access the data analysis workspace.",
@@ -355,6 +364,15 @@ export const I18N = {
     qbSaveAs: "इस नाम से सहेजें…",
     qbSaveQuery: "क्वेरी सहेजें",
     qbOpenSaved: "सहेजी गई क्वेरी खोलें…",
+    qbAdditionalTables: "अतिरिक्त तालिकाएँ",
+    qbAdditionalTablesDesc:
+      "इसी क्वेरी में और तालिकाएँ जोड़ें। हर तालिका स्रोत से एक सटीक कॉलम पर जुड़ती है। अधिकतम {max} अतिरिक्त तालिकाएँ। अतिरिक्त तालिकाओं के साथ समूहीकरण बंद रहता है।",
+    qbAddTable: "एक और तालिका जोड़ें",
+    qbExtraTable: "तालिका {n}",
+    qbExtraSourceKey: "स्रोत कॉलम",
+    qbExtraJoinKey: "इस तालिका का कॉलम",
+    qbExtraAttrs: "दिखाने वाले कॉलम",
+    qbRemoveTable: "तालिका हटाएँ",
     loginWelcome: "Analytics Advisor में साइन इन करें",
     loginLead:
       "डेटा विश्लेषण कार्यक्षेत्र तक पहुँचने के लिए अपने अधिकृत क्रेडेंशियल का उपयोग करें।",

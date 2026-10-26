@@ -160,7 +160,7 @@ class LakehouseRealEngineIT {
                 List.of(), List.of(),
                 srcDisplay("name"), tgtDisplay("owner_name"),
                 groups, highlightDuplicates, null, joinType, comparisons, mismatchOnly, null, null, false,
-                List.of(), List.of(), null, false);
+                List.of(), List.of(), null, false, List.of());
     }
 
     private static MatchGroup exact(String sourceColumn, String targetColumn) {

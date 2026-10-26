@@ -143,7 +143,7 @@ class RecordMatchExtractRulesTest {
                 List.of(), List.of(),
                 List.of(district), List.of(),
                 List.of(), false, null, null, List.of(), false,
-                rules, null, true, List.of(), List.of(), null, false);
+                rules, null, true, List.of(), List.of(), null, false, List.of());
         RecordMatchService.MatchQuery query = matchService.planMatch(req);
         assertTrue(query.sql().contains("(SELECT * FROM " + SRC + " t WHERE district_code IN (?) AND (t.age_years > ?)) src"));
         assertFalse(query.sql().contains(" JOIN "));
@@ -160,7 +160,7 @@ class RecordMatchExtractRulesTest {
                 List.of(), List.of(),
                 List.of(district), List.of(),
                 List.of(), false, null, null, List.of(), false,
-                rules, null, true, List.of(), List.of(), null, false);
+                rules, null, true, List.of(), List.of(), null, false, List.of());
         RecordMatchService.MatchQuery query = matchService.planMatch(req);
         assertTrue(query.sql().contains("(SELECT * FROM " + SRC + " t WHERE t.age_years > ?) src"));
         assertFalse(query.sql().contains("district_code IN"));
@@ -184,7 +184,7 @@ class RecordMatchExtractRulesTest {
                 List.of(), List.of(),
                 List.of(district), List.of(),
                 List.of(), false, null, null, List.of(), false,
-                rules, null, true, List.of(), List.of(), null, false);
+                rules, null, true, List.of(), List.of(), null, false, List.of());
         auditService.planMatchAudited(req);
         ArgumentCaptor<AuditEventDraft> captor = ArgumentCaptor.forClass(AuditEventDraft.class);
         verify(auditCapture).recordBestEffort(captor.capture());
@@ -205,7 +205,7 @@ class RecordMatchExtractRulesTest {
                 List.of(), List.of(),
                 List.of(name), List.of(),
                 List.of(), false, null, null, List.of(), false,
-                rules, null, true, List.of(), List.of(), null, false);
+                rules, null, true, List.of(), List.of(), null, false, List.of());
         RecordMatchService.MatchQuery query = matchService.planMatch(req);
         assertTrue(query.sql().contains("(SELECT * FROM " + SRC + " t WHERE district_code IN (?) AND ("));
         assertTrue(query.sql().contains("substr(lower(t.father_name), 1, 3) = substr(lower(?), 1, 3)"));
@@ -234,7 +234,7 @@ class RecordMatchExtractRulesTest {
                 List.of(), List.of(),
                 List.of(district), List.of(),
                 List.of(), false, null, null, List.of(), false,
-                rules, null, true, List.of(), List.of(), null, false);
+                rules, null, true, List.of(), List.of(), null, false, List.of());
         RecordMatchService.MatchQuery query = matchService.planMatch(req);
         String display = matchService.renderQueryForDisplay(query);
         assertTrue(display.contains("'Jaipur'"));
@@ -268,7 +268,7 @@ class RecordMatchExtractRulesTest {
         MatchCriterion tgt = new MatchCriterion("iceberg_silver", "silver_txn", "tbl_txn_bankdtl", "m_id", null);
         return new RecordMatchRequest(
                 List.of(src), List.of(tgt), null, null, List.of(), false, null, joinType,
-                List.of(), false, sourceRules, targetRules, false, List.of(), List.of(), null, false);
+                List.of(), false, sourceRules, targetRules, false, List.of(), List.of(), null, false, List.of());
     }
 
     private static QualifiedColumn col(String name) {

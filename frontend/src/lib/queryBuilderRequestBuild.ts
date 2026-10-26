@@ -1,5 +1,6 @@
 import { isCascadeComplete, type CascadeValue } from "@/components/LakehouseCascade";
 import type {
+  AdditionalJoin,
   ComparisonGroup,
   DisplayColumn,
   MatchCriterion,
@@ -9,7 +10,12 @@ import type {
   RuleOperator,
   TableRef,
 } from "@/lib/analysisApi";
-import type { ExtractConfig, ExtractRuleRow, ReportConfig } from "@/lib/queryBuilderPipelineTypes";
+import type {
+  AdditionalTableConfig,
+  ExtractConfig,
+  ExtractRuleRow,
+  ReportConfig,
+} from "@/lib/queryBuilderPipelineTypes";
 
 const RULE_OPS: { value: RuleOperator; needsValue: boolean }[] = [
   { value: "EQ", needsValue: true },
@@ -204,7 +210,16 @@ export function buildExtractRequest(dualMode: boolean, extract: ExtractConfig): 
     ...tgt,
     column,
   }));
-  if (displays.length === 0 && targetDisplays.length === 0 && !extract.countOnly) return null;
+  const additionalJoins = additionalJoinsFrom(extract.additionalTables);
+  if (additionalJoins === null) return null;
+  if (
+    displays.length === 0 &&
+    targetDisplays.length === 0 &&
+    additionalJoins.length === 0 &&
+    !extract.countOnly
+  ) {
+    return null;
+  }
 
   const sourceCriteria: MatchCriterion[] = [
     { ...ref, column: extract.joinKeySource, fuzzyThresholdPercent: null },
@@ -233,7 +248,29 @@ export function buildExtractRequest(dualMode: boolean, extract: ExtractConfig): 
   if (extract.joinType !== "INNER") {
     req.joinType = extract.joinType;
   }
+  if (additionalJoins.length > 0) {
+    req.additionalJoins = additionalJoins;
+  }
   return applyExtractRunOptions(req, extract);
+}
+
+/** Empty when no extra table is configured. Null when a row was started but not finished. */
+function additionalJoinsFrom(tables: AdditionalTableConfig[] | undefined): AdditionalJoin[] | null {
+  if (!tables || tables.length === 0) return [];
+  const joins: AdditionalJoin[] = [];
+  for (const row of tables) {
+    const ref = refAsTable(row.ref);
+    if (!ref || !row.sourceColumn || !row.joinColumn) return null;
+    joins.push({
+      catalog: ref.catalog,
+      schema: ref.schema,
+      table: ref.table,
+      sourceColumn: row.sourceColumn,
+      joinColumn: row.joinColumn,
+      displayColumns: row.displayCols ?? [],
+    });
+  }
+  return joins;
 }
 
 function buildComparisonGroups(

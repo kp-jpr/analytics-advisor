@@ -102,7 +102,7 @@ class GroupedScopeEnforcementTest {
                 null, null, false,
                 List.of(new DisplayColumn("iceberg", "srse", "beneficiary", "district")),
                 List.of(new AggregateSpec(AggregateFunction.COUNT, null, false, null)),
-                null, false);
+                null, false, List.of());
     }
 
     @ParameterizedTest

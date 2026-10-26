@@ -176,6 +176,20 @@ export type RecordMatchRequest = {
   resultLimit?: number | null;
   /** COUNT(*) over the same shape instead of row projection. */
   countOnly?: boolean;
+  /**
+   * Further tables inner-joined to the source in this same query.
+   * Omitted when the query is a single table or a two-table match.
+   */
+  additionalJoins?: AdditionalJoin[];
+};
+
+export type AdditionalJoin = {
+  catalog: string;
+  schema: string;
+  table: string;
+  sourceColumn: string;
+  joinColumn: string;
+  displayColumns?: string[];
 };
 
 export type HubSide = "SOURCE" | "TARGET";

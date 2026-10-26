@@ -16,6 +16,7 @@ import {
   type ExtractConfig,
   type ReportConfig,
 } from "@/lib/queryBuilderPipelineTypes";
+import { hydrateExtractConfigFromRequest } from "@/lib/savedQueryHydrate";
 
 const SOURCE = { catalog: "iceberg", schema: "srse", table: "beneficiary" };
 const TARGET = { catalog: "iceberg_silver", schema: "silver_txn", table: "tbl_txn_bankdtl" };
@@ -108,6 +109,49 @@ describe("ordinary source rules", () => {
       column: { column: "district" },
       value: 10,
     });
+  });
+
+  it("joins a third table into the same request and round-trips it", () => {
+    const village = { catalog: "iceberg", schema: "srse", table: "village" };
+    const configured = extract({
+      additionalTables: [
+        {
+          id: "extra-1",
+          ref: village,
+          sourceColumn: "m_id",
+          joinColumn: "m_id",
+          displayCols: ["village_name"],
+        },
+      ],
+    });
+    const req = buildExtractRequest(true, configured)!;
+    expect(req.additionalJoins).toEqual([
+      {
+        ...village,
+        sourceColumn: "m_id",
+        joinColumn: "m_id",
+        displayColumns: ["village_name"],
+      },
+    ]);
+    expect(buildExtractRequest(false, configured)!.additionalJoins).toBeUndefined();
+    const restored = hydrateExtractConfigFromRequest(req);
+    expect(buildExtractRequest(true, restored)!.additionalJoins).toEqual(req.additionalJoins);
+    expect(
+      buildExtractRequest(
+        true,
+        extract({
+          additionalTables: [
+            {
+              id: "extra-1",
+              ref: village,
+              sourceColumn: "m_id",
+              joinColumn: "",
+              displayCols: [],
+            },
+          ],
+        }),
+      ),
+    ).toBeNull();
   });
 
   it("maps destination attributes separately and still requires a join key", () => {

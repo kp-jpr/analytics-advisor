@@ -194,7 +194,7 @@ class ExternalDirectRealEngineIT {
                 List.of(new DisplayColumn("jdbc_7", e.schema, e.id("PEOPLE"), e.id("NAME"))),
                 List.of(new DisplayColumn("jdbc_7", e.schema, e.id("ADDRESSES"), e.id("CITY"))),
                 List.of(), false, null, type, List.of(), false, null, null, false,
-                List.of(), List.of(), null, false);
+                List.of(), List.of(), null, false, List.of());
     }
 
     private static String csv(RecordMatchService service, RecordMatchRequest request) throws Exception {
@@ -261,7 +261,7 @@ class ExternalDirectRealEngineIT {
                 null, null, false,
                 List.of(new DisplayColumn("jdbc_7", e.schema, e.id("PEOPLE"), e.id("DISTRICT"))),
                 List.of(new AggregateSpec(AggregateFunction.COUNT, null, false, null)),
-                null, false);
+                null, false, List.of());
 
         String out = csv(jaipur.match, grouped);
 

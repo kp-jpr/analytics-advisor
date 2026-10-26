@@ -485,7 +485,8 @@ class EmittedSqlParsesTest {
                 List.of(new DisplayColumn(CATALOG, SCHEMA, "beneficiary", "district")),
                 List.of(new AggregateSpec(AggregateFunction.COUNT, null, false, null)),
                 null,
-                false);
+                false,
+                List.of());
         assertParsesWithBindableParams(req);
         assertTrue(service.planMatch(req).sql().contains(" GROUP BY "));
     }

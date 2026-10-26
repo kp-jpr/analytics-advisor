@@ -1,6 +1,7 @@
 package gov.rajasthan.smart.srse.analysis;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import gov.rajasthan.smart.srse.compiler.Ast;
 
 import java.util.List;
@@ -30,6 +31,9 @@ import java.util.List;
  * SELECT only, never in ON (see {@link ComparisonGroup}).
  *
  * <p>{@code dedup} is optional. Unknown JSON properties on the wire are ignored.
+ *
+ * <p>{@code additionalJoins} are further tables inner-joined to the source of
+ * this same query. Null or empty leaves the two-table SQL unchanged.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record RecordMatchRequest(
@@ -49,7 +53,8 @@ public record RecordMatchRequest(
         List<DisplayColumn> groupByColumns,
         List<AggregateSpec> aggregates,
         Integer resultLimit,
-        Boolean countOnly) {
+        Boolean countOnly,
+        @JsonInclude(JsonInclude.Include.NON_EMPTY) List<AdditionalJoin> additionalJoins) {
 
     public RecordMatchRequest {
         sourceCriteria = sourceCriteria == null ? List.of() : sourceCriteria;
@@ -61,6 +66,7 @@ public record RecordMatchRequest(
         groupByColumns = groupByColumns == null ? List.of() : groupByColumns;
         aggregates = aggregates == null ? List.of() : aggregates;
         countOnly = Boolean.TRUE.equals(countOnly);
+        additionalJoins = additionalJoins == null ? List.of() : List.copyOf(additionalJoins);
     }
 
     /** Grouped result when either grouping keys or aggregates are present (§5.5). */
@@ -80,7 +86,7 @@ public record RecordMatchRequest(
                               DedupSpec dedup) {
         this(sourceCriteria, targetCriteria, sourceDisplayColumns, targetDisplayColumns,
                 List.of(), highlightDuplicates, dedup, null, List.of(), false, null, null, false,
-                List.of(), List.of(), null, false);
+                List.of(), List.of(), null, false, List.of());
     }
 
     /** Pre–per-target join types: multi-target sub-matches omitted {@code joinType} (INNER). */
@@ -93,7 +99,7 @@ public record RecordMatchRequest(
                               DedupSpec dedup) {
         this(sourceCriteria, targetCriteria, sourceDisplayColumns, targetDisplayColumns,
                 joinGroups, highlightDuplicates, dedup, null, List.of(), false, null, null, false,
-                List.of(), List.of(), null, false);
+                List.of(), List.of(), null, false, List.of());
     }
 
     public RecordMatchRequest(List<MatchCriterion> sourceCriteria,
@@ -106,7 +112,7 @@ public record RecordMatchRequest(
                               JoinType joinType) {
         this(sourceCriteria, targetCriteria, sourceDisplayColumns, targetDisplayColumns,
                 joinGroups, highlightDuplicates, dedup, joinType, List.of(), false, null, null, false,
-                List.of(), List.of(), null, false);
+                List.of(), List.of(), null, false, List.of());
     }
 
     /** Multi-target sub-match (comparisons + mismatch flag; no extract rules). */
@@ -122,6 +128,6 @@ public record RecordMatchRequest(
                               boolean mismatchOnly) {
         this(sourceCriteria, targetCriteria, sourceDisplayColumns, targetDisplayColumns,
                 joinGroups, highlightDuplicates, dedup, joinType, comparisonGroups, mismatchOnly,
-                null, null, false, List.of(), List.of(), null, false);
+                null, null, false, List.of(), List.of(), null, false, List.of());
     }
 }

@@ -36,7 +36,11 @@ import {
 } from "@/lib/queryBuilderRequestBuild";
 import { MetadataColumnStatus } from "@/components/query-builder/MetadataColumnStatus";
 import { useQueryBuilderPipeline } from "@/lib/queryBuilderPipelineStore";
-import type { ExtractRuleRow } from "@/lib/queryBuilderPipelineTypes";
+import {
+  MAX_ADDITIONAL_TABLES,
+  type AdditionalTableConfig,
+  type ExtractRuleRow,
+} from "@/lib/queryBuilderPipelineTypes";
 
 const REGISTRY_FETCHERS: CascadeFetchers = {
   listSourceSystems: listAnalysisSourceSystems,
@@ -156,6 +160,174 @@ export function AttributeMultiSelect({
   );
 }
 
+function AdditionalJoinTables({
+  sourceColumns,
+  tables,
+  defaultSourceColumn,
+  onChange,
+}: Readonly<{
+  sourceColumns: RegisteredColumn[];
+  tables: AdditionalTableConfig[];
+  defaultSourceColumn: string;
+  onChange: (next: AdditionalTableConfig[]) => void;
+}>) {
+  const { t } = useShell();
+  const updateRow = (id: string, patch: Partial<AdditionalTableConfig>) => {
+    onChange(tables.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+  };
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div className="ttl">{t("qbAdditionalTables")}</div>
+      <p className="desc">{fillCatalog(t("qbAdditionalTablesDesc"), { max: MAX_ADDITIONAL_TABLES })}</p>
+      {tables.map((row, index) => (
+        <AdditionalJoinRow
+          key={row.id}
+          index={index}
+          row={row}
+          sourceColumns={sourceColumns}
+          onChange={(patch) => updateRow(row.id, patch)}
+          onRemove={() => onChange(tables.filter((item) => item.id !== row.id))}
+        />
+      ))}
+      {tables.length < MAX_ADDITIONAL_TABLES ? (
+        <button
+          type="button"
+          className="btn secondary"
+          onClick={() =>
+            onChange([
+              ...tables,
+              {
+                id: `extra-${Date.now().toString(36)}-${tables.length}`,
+                ref: { catalog: "", schema: "", table: "" },
+                sourceColumn: defaultSourceColumn,
+                joinColumn: "",
+                displayCols: [],
+              },
+            ])
+          }
+        >
+          {t("qbAddTable")} ({tables.length}/{MAX_ADDITIONAL_TABLES})
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function AdditionalJoinRow({
+  index,
+  row,
+  sourceColumns,
+  onChange,
+  onRemove,
+}: Readonly<{
+  index: number;
+  row: AdditionalTableConfig;
+  sourceColumns: RegisteredColumn[];
+  onChange: (patch: Partial<AdditionalTableConfig>) => void;
+  onRemove: () => void;
+}>) {
+  const { t } = useShell();
+  const [columns, setColumns] = useState<RegisteredColumn[]>([]);
+  const refKey = `${row.ref.catalog}|${row.ref.schema}|${row.ref.table}`;
+  const rowRef = useRef(row);
+  const onChangeRef = useRef(onChange);
+  rowRef.current = row;
+  onChangeRef.current = onChange;
+
+  useEffect(() => {
+    const current = rowRef.current;
+    if (!isCascadeComplete(current.ref)) {
+      setColumns([]);
+      return undefined;
+    }
+    let cancelled = false;
+    listAnalysisColumns(current.ref).then((cols) => {
+      if (cancelled) return;
+      setColumns(cols);
+      const names = cols.map((column) => column.name);
+      const latest = rowRef.current;
+      const displayCols = retainValidDisplayColumns(latest.displayCols, names);
+      const joinColumn = latest.joinColumn && names.includes(latest.joinColumn) ? latest.joinColumn : "";
+      if (displayCols.length !== latest.displayCols.length || joinColumn !== latest.joinColumn) {
+        onChangeRef.current({ displayCols, joinColumn });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [refKey]);
+
+  const label = fillCatalog(t("qbExtraTable"), { n: index + 3 });
+  return (
+    <div
+      className="section"
+      style={{ marginTop: 12, padding: 12, border: "1px solid var(--srse-border)", borderRadius: 8 }}
+    >
+      <div className="row" style={{ justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+        <div className="ttl" style={{ margin: 0 }}>
+          {label}
+        </div>
+        <button type="button" className="btn secondary sm" onClick={onRemove}>
+          {t("qbRemoveTable")}
+        </button>
+      </div>
+      <div className="pick" style={{ marginTop: 8 }}>
+        <LakehouseCascade
+          idPrefix={`extract-extra-${row.id}`}
+          value={row.ref}
+          onChange={(ref) => onChange({ ref, joinColumn: "", displayCols: [] })}
+          fetchers={REGISTRY_FETCHERS}
+          appearance="prototype"
+        />
+      </div>
+      <div className="two-col" style={{ marginTop: 12 }}>
+        <div className="field">
+          <label>{t("qbExtraSourceKey")}</label>
+          <select
+            aria-label={`${label} ${t("qbExtraSourceKey")}`}
+            value={row.sourceColumn}
+            onChange={(e) => onChange({ sourceColumn: e.target.value })}
+          >
+            <option value="">{t("selPKPlaceholder")}</option>
+            {sourceColumns.map((column) => (
+              <option key={column.name} value={column.name}>
+                {column.businessName ?? column.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label>{t("qbExtraJoinKey")}</label>
+          <select
+            aria-label={`${label} ${t("qbExtraJoinKey")}`}
+            value={row.joinColumn}
+            onChange={(e) => onChange({ joinColumn: e.target.value })}
+          >
+            <option value="">{t("selPKPlaceholder")}</option>
+            {columns.map((column) => (
+              <option key={column.name} value={column.name}>
+                {column.businessName ?? column.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      {isCascadeComplete(row.ref) ? (
+        <div className="pick" style={{ marginTop: 12 }}>
+          <div className="ttl">{t("qbExtraAttrs")}</div>
+          <AttributeMultiSelect
+            id={`extract-extra-attrs-${row.id}`}
+            label={label}
+            columns={columns}
+            selected={row.displayCols}
+            onChange={(displayCols) => onChange({ displayCols })}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 type ExtractRecordsTabProps = {
   onGoReport?: () => void;
 };
@@ -177,6 +349,7 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
     joinKeySource,
     joinKeyTarget,
     joinType,
+    additionalTables,
     ruleColumn,
     ruleOp,
     ruleValue,
@@ -664,6 +837,12 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
               ))}
             </select>
           </div>
+          <AdditionalJoinTables
+            sourceColumns={sourceColumnsDisplay}
+            tables={additionalTables}
+            defaultSourceColumn={joinKeySource}
+            onChange={(next) => patchExtract({ additionalTables: next })}
+          />
         </section>
       )}
 

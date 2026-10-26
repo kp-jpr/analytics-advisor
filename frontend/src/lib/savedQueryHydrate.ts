@@ -313,6 +313,13 @@ export function hydrateExtractConfigFromRequest(req: RecordMatchRequest): Extrac
     targetRuleRows: basicRuleRowsFromSpec(req.targetRules),
     resultLimit: req.resultLimit ?? null,
     countOnly: req.countOnly ?? false,
+    additionalTables: (req.additionalJoins ?? []).map((join, index) => ({
+      id: `saved-extra-${index + 1}`,
+      ref: { catalog: join.catalog, schema: join.schema, table: join.table },
+      sourceColumn: join.sourceColumn,
+      joinColumn: join.joinColumn,
+      displayCols: join.displayColumns ?? [],
+    })),
   };
 }
 

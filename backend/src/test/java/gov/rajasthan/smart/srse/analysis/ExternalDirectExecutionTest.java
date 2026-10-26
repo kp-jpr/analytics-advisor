@@ -146,7 +146,7 @@ class ExternalDirectExecutionTest {
                 List.of(), List.of(),
                 List.of(new DisplayColumn("jdbc_7", "public", "people", "district")),
                 List.of(), List.of(), false, null, null, List.of(), false,
-                null, null, true, List.of(), List.of(), null, false);
+                null, null, true, List.of(), List.of(), null, false, List.of());
 
         ByteArrayOutputStream csvOut = new ByteArrayOutputStream();
         StreamingResponseBody csv = service.matchCsv(request);

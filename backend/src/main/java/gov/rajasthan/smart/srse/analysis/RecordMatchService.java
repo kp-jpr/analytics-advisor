@@ -18,6 +18,7 @@ import gov.rajasthan.smart.srse.execution.ScopedJdbc;
 import gov.rajasthan.smart.srse.execution.AnalysisExecutionRoute;
 import gov.rajasthan.smart.srse.execution.AnalysisExecutionRouter;
 import gov.rajasthan.smart.srse.lakehouse.AnalysisScopeFromService;
+import gov.rajasthan.smart.srse.lakehouse.LakehouseIdentifiers;
 import gov.rajasthan.smart.srse.lakehouse.LakehouseRegistryService;
 import gov.rajasthan.smart.srse.lakehouse.LakehouseRegistryService.RegisteredColumn;
 import gov.rajasthan.smart.srse.lakehouse.QualifiedTable;
@@ -155,11 +156,21 @@ public class RecordMatchService {
         validateExtractRunOptions(req);
         MatchQuery query;
         if (req.singleSource()) {
+            if (!req.additionalJoins().isEmpty()) {
+                throw new IllegalArgumentException(
+                        "Additional tables require a source and destination join");
+            }
             query = route(buildSingleSourceQuery(req), List.of(tableForSingleSource(req)));
         } else {
             JoinPlan join = normalizeJoin(req);
             Sides sides = validateRequest(req, join);
-            query = route(buildMatchQuery(req, join, sides), List.of(sides.sourceTable(), sides.targetTable()));
+            List<QualifiedTable> referenced = new ArrayList<>();
+            referenced.add(sides.sourceTable());
+            referenced.add(sides.targetTable());
+            for (AdditionalJoin extra : req.additionalJoins()) {
+                referenced.add(extra.qualifiedTable());
+            }
+            query = route(buildMatchQuery(req, join, sides), referenced);
         }
         return applyExtractRunModifiers(query, req);
     }
@@ -826,12 +837,18 @@ public class RecordMatchService {
     private Sides validateRequest(RecordMatchRequest req, JoinPlan join) {
         QualifiedTable sourceTable = sameTable(join.sourceColumns(), "sourceCriteria");
         QualifiedTable targetTable = sameTable(join.targetColumns(), "targetCriteria");
+        validateAdditionalJoins(req);
         validateDisplayColumns(req.sourceDisplayColumns(), sourceTable, "sourceDisplayColumns");
         validateDisplayColumns(req.targetDisplayColumns(), targetTable, "targetDisplayColumns");
 
-        List<MatchCriterion> comparisonSourceColumns = req.comparisonGroups().stream()
+        List<MatchCriterion> comparisonSourceColumns = new ArrayList<>(req.comparisonGroups().stream()
                 .flatMap(g -> g.source().stream())
-                .toList();
+                .toList());
+        for (AdditionalJoin extra : req.additionalJoins()) {
+            comparisonSourceColumns.add(new MatchCriterion(
+                    sourceTable.catalog(), sourceTable.schema(), sourceTable.table(),
+                    extra.sourceColumn(), null));
+        }
         List<MatchCriterion> comparisonTargetColumns = req.comparisonGroups().stream()
                 .flatMap(g -> g.target().stream())
                 .toList();
@@ -891,7 +908,10 @@ public class RecordMatchService {
         ScopeFilteredFrom targetScope = applySideRules(
                 scopeFrom.planFrom(sides.targetTable()), req.targetRules(), sides.targetTable(),
                 sides.targetColumns()).scope();
-        enforceEstimatedRowCeiling(sides, groups, sourceScope, targetScope, req.grouped());
+        List<ScopeFilteredFrom> extraScopes = planAdditionalScopes(req);
+        enforceEstimatedRowCeiling(
+                sides, groups, sourceScope, targetScope, req.grouped(),
+                req.additionalJoins(), extraScopes);
 
         List<ComparisonPlan> comparisonPlans = List.of();
         String dedupAlias = null;
@@ -935,8 +955,10 @@ public class RecordMatchService {
         List<Object> scopeParams = new ArrayList<>();
         String sourceFrom = fromSide(sourceScope, "src", sourceUnnests, scopeParams);
         String targetFrom = fromSide(targetScope, "tgt", targetUnnests, scopeParams);
+        StringBuilder extraJoins = new StringBuilder();
+        appendAdditionalJoins(req, sides, select, outerColumns, extraJoins, scopeParams, extraScopes);
         String baseSql = "SELECT " + select + " FROM " + sourceFrom + " " + joinType.joinKeyword() + " "
-                + targetFrom + " ON " + onClause + " WHERE " + where;
+                + targetFrom + " ON " + onClause + extraJoins + " WHERE " + where;
 
         if (req.grouped()) {
             String groupBy = MatchGroupingSql.groupByClause(req, sides.sourceTable(), sides.targetTable());
@@ -951,6 +973,117 @@ public class RecordMatchService {
         allParams.addAll(scopeParams);
         allParams.addAll(params);
         return new MatchQuery(finalSql, allParams, List.copyOf(outerColumns));
+    }
+
+    /** Scope for each additional table, planned once and reused by the fan-out guard and the SQL. */
+    private List<ScopeFilteredFrom> planAdditionalScopes(RecordMatchRequest req) {
+        if (req.additionalJoins().isEmpty()) {
+            return List.of();
+        }
+        List<ScopeFilteredFrom> scopes = new ArrayList<>(req.additionalJoins().size());
+        for (AdditionalJoin extra : req.additionalJoins()) {
+            scopes.add(scopeFrom.planFrom(extra.qualifiedTable()));
+        }
+        return scopes;
+    }
+
+    /**
+     * Further tables inner-joined to the source. An empty list leaves the
+     * two-table SQL unchanged. Each extra table is described once, scoped the
+     * same way as the primary sides, and projected under {@code extraN_}.
+     * The equality uses the same type alignment as the primary join so a
+     * varchar/bigint pair stays a hash join instead of failing at execution.
+     */
+    private void appendAdditionalJoins(
+            RecordMatchRequest req,
+            Sides sides,
+            StringBuilder select,
+            Set<String> outerColumns,
+            StringBuilder extraJoinSql,
+            List<Object> scopeParams,
+            List<ScopeFilteredFrom> extraScopes) {
+        if (req.additionalJoins().isEmpty() || req.grouped()) {
+            return;
+        }
+        int n = 1;
+        for (int i = 0; i < req.additionalJoins().size(); i++) {
+            AdditionalJoin extra = req.additionalJoins().get(i);
+            String alias = "x" + n;
+            List<String> names = new ArrayList<>();
+            names.add(extra.joinColumn());
+            for (String column : extra.displayColumns()) {
+                if (!names.contains(column)) {
+                    names.add(column);
+                }
+            }
+            Map<String, RegisteredColumn> described = registry.describeColumns(extra.qualifiedTable(), names);
+            ScopeFilteredFrom scope = extraScopes.get(i);
+            TypeCoercion.Aligned aligned = alignAdditionalJoin(sides, extra, alias, described);
+            extraJoinSql.append(" INNER JOIN ")
+                    .append(fromSide(scope, alias, List.of(), scopeParams))
+                    .append(" ON ").append(aligned.left()).append(" = ").append(aligned.right());
+            String joinOut = "extra" + n + "_" + extra.joinColumn();
+            if (!outerColumns.contains(joinOut)) {
+                appendSelect(select, outerColumns, alias, extra.joinColumn(),
+                        allocateUniqueAlias(joinOut, outerColumns));
+            }
+            List<DisplayColumn> displays = new ArrayList<>();
+            for (String column : extra.displayColumns()) {
+                if (!column.equals(extra.joinColumn())) {
+                    displays.add(new DisplayColumn(
+                            extra.catalog(), extra.schema(), extra.table(), column));
+                }
+            }
+            appendDisplaySelects(select, outerColumns, alias, "extra" + n + "_", displays);
+            n++;
+        }
+    }
+
+    private TypeCoercion.Aligned alignAdditionalJoin(
+            Sides sides,
+            AdditionalJoin extra,
+            String alias,
+            Map<String, RegisteredColumn> described) {
+        MatchCriterion source = new MatchCriterion(
+                sides.sourceTable().catalog(), sides.sourceTable().schema(), sides.sourceTable().table(),
+                extra.sourceColumn(), null);
+        MatchCriterion target = new MatchCriterion(
+                extra.catalog(), extra.schema(), extra.table(), extra.joinColumn(), null);
+        CompareAs mode = CompareAs.resolve(
+                sideCompareAs(List.of(source)), sideCompareAs(List.of(target)));
+        return TypeCoercion.align(
+                "src." + extra.sourceColumn(), familyOf(sides.sourceColumns(), extra.sourceColumn()),
+                alias + "." + extra.joinColumn(), familyOf(described, extra.joinColumn()),
+                mode);
+    }
+
+    private void validateAdditionalJoins(RecordMatchRequest req) {
+        List<AdditionalJoin> extras = req.additionalJoins();
+        if (extras.isEmpty()) {
+            return;
+        }
+        if (req.grouped()) {
+            throw new IllegalArgumentException(
+                    "Additional tables cannot be combined with grouping. "
+                            + "Remove the extra tables or turn grouping off.");
+        }
+        int max = analysisProperties.maxTargetSets();
+        if (extras.size() > max) {
+            throw new IllegalArgumentException("At most " + max + " additional tables can be joined");
+        }
+        for (int i = 0; i < extras.size(); i++) {
+            AdditionalJoin extra = extras.get(i);
+            extra.qualifiedTable();
+            LakehouseIdentifiers.requireSafe("sourceColumn", extra.sourceColumn());
+            LakehouseIdentifiers.requireSafe("joinColumn", extra.joinColumn());
+            if (extra.displayColumns().size() > MAX_CRITERIA_PER_SIDE) {
+                throw new IllegalArgumentException(
+                        "additionalJoins[" + i + "] must have 0 to " + MAX_CRITERIA_PER_SIDE + " display columns");
+            }
+            for (String column : extra.displayColumns()) {
+                LakehouseIdentifiers.requireSafe("displayColumn", column);
+            }
+        }
     }
 
     /**
@@ -1403,7 +1536,9 @@ public class RecordMatchService {
 
     /**
      * Equi-join fan-out estimate before the match query runs:
-     * {@code sourceRows × targetRows / ∏ max(sourceDistinct_g, targetDistinct_g)}.
+     * {@code sourceRows × targetRows × ∏ extraRows / ∏ max(leftDistinct, rightDistinct)}.
+     * Additional tables use the same formula and the same catalog-statistics
+     * shortcut. An empty additional list does not read those tables.
      * Distincts use the blocking-key expression on fuzzy groups. Refuses when above
      * {@link AnalysisProperties#maxEstimatedRows()}.
      */
@@ -1412,7 +1547,9 @@ public class RecordMatchService {
             List<GroupPlan> groups,
             ScopeFilteredFrom sourceScope,
             ScopeFilteredFrom targetScope,
-            boolean groupedResult) {
+            boolean groupedResult,
+            List<AdditionalJoin> additionalJoins,
+            List<ScopeFilteredFrom> extraScopes) {
         long ceiling = analysisProperties.maxEstimatedRows();
         if (ceiling <= 0 || groups.isEmpty()) {
             return;
@@ -1451,6 +1588,46 @@ public class RecordMatchService {
                 return;
             }
         }
+        if (!additionalJoins.isEmpty()) {
+            Map<String, Long> sourceDistinctByColumn = new java.util.HashMap<>();
+            for (int i = 0; i < additionalJoins.size(); i++) {
+                AdditionalJoin extra = additionalJoins.get(i);
+                ScopeFilteredFrom extraScope = extraScopes.get(i);
+                QualifiedTable extraTable = extra.qualifiedTable();
+                TableStats extraStats = extraScope.appliesFilter() ? TableStats.EMPTY : readCatalogStats(extraTable);
+                long extraRows = extraScope.appliesFilter()
+                        ? queryScopedRowCount(extraScope, extraTable)
+                        : (extraStats.rowCount() != null
+                                ? extraStats.rowCount() : queryRowCount(extraTable));
+                if (extraRows == 0) {
+                    return;
+                }
+                long sourceDistinct = sourceDistinctByColumn.computeIfAbsent(extra.sourceColumn(), column ->
+                        sideDistinctEstimate(
+                                sides.sourceTable(), sourceScope,
+                                List.of(new MatchCriterion(
+                                        sides.sourceTable().catalog(), sides.sourceTable().schema(),
+                                        sides.sourceTable().table(), column, null)),
+                                false, null, sourceStats));
+                long extraDistinct = sideDistinctEstimate(
+                        extraTable, extraScope,
+                        List.of(new MatchCriterion(
+                                extra.catalog(), extra.schema(), extra.table(), extra.joinColumn(), null)),
+                        false, null, extraStats);
+                long groupMax = Math.max(sourceDistinct, extraDistinct);
+                if (groupMax <= 0) {
+                    return;
+                }
+                numerator = multiplyCap(numerator, extraRows, Long.MAX_VALUE);
+                if (numerator <= 0) {
+                    return;
+                }
+                denominator = multiplyCap(denominator, groupMax, Long.MAX_VALUE);
+                if (denominator <= 0) {
+                    return;
+                }
+            }
+        }
         long estimate = numerator / denominator;
         if (numerator == Long.MAX_VALUE || estimate < 0) {
             estimate = ceiling + 1;
@@ -1460,6 +1637,9 @@ public class RecordMatchService {
             String groupedNote = groupedResult
                     ? "That estimate is rows processed before grouping; the grouped result itself may be much smaller. "
                     : "";
+            String extraNote = additionalJoins.isEmpty()
+                    ? ""
+                    : "Additional tables are included in this estimate. ";
             throw new IllegalArgumentException(
                     "Estimated match fan-out is about " + formatEstimate(estimate)
                             + " rows processed before the join"
@@ -1467,6 +1647,7 @@ public class RecordMatchService {
                             + " (limit " + formatEstimate(ceiling) + "). "
                             + groupedNote
                             + scopeNote
+                            + extraNote
                             + "Try a longer blocking prefix (SRSE_ANALYSIS_BLOCKING_PREFIX_LEN), "
                             + "a more selective join key, or fewer folded groups.");
         }

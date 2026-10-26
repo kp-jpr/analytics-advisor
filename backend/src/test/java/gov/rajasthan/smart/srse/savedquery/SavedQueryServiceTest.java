@@ -136,6 +136,6 @@ class SavedQueryServiceTest {
         MatchCriterion c = new MatchCriterion("iceberg", "srse", "beneficiary", "district", null);
         return new RecordMatchRequest(
                 List.of(c), List.of(c), List.of(), List.of(), List.of(), false, null, null,
-                List.of(), false, null, null, false, List.of(), List.of(), null, false);
+                List.of(), false, null, null, false, List.of(), List.of(), null, false, List.of());
     }
 }

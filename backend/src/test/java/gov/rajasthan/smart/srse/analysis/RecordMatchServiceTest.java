@@ -1220,6 +1220,116 @@ class RecordMatchServiceTest {
     }
 
     @Test
+    void additionalTableIsInnerJoinedToTheSourceInTheSameQuery() {
+        AdditionalJoin village = new AdditionalJoin(
+                CATALOG, SCHEMA, "village", "district", "district_code", List.of("village_name"));
+        RecordMatchRequest req = new RecordMatchRequest(
+                List.of(exact("beneficiary", "district")),
+                List.of(exact("bank", "district")),
+                null, null, List.of(), false, null, null, List.of(), false,
+                null, null, false, List.of(), List.of(), null, false,
+                List.of(village));
+        String sql = service.planMatch(req).sql();
+        assertTrue(sql.contains("src.district = tgt.district"), sql);
+        assertTrue(sql.contains(
+                "INNER JOIN " + qualified("village") + " x1 ON src.district = x1.district_code"), sql);
+        assertTrue(sql.contains("x1.village_name AS \"extra1_village_name\""), sql);
+        assertFalse(sql.contains(" x2 "), sql);
+    }
+
+    @Test
+    void twoTableSqlDoesNotAddAnExtraJoin() {
+        assertFalse(service.planMatch(exactMatchRequest()).sql().contains(" x1 "));
+    }
+
+    @Test
+    void groupingWithAnAdditionalTableIsRejected() {
+        AdditionalJoin village = new AdditionalJoin(
+                CATALOG, SCHEMA, "village", "district", "district_code", List.of());
+        RecordMatchRequest req = new RecordMatchRequest(
+                List.of(exact("beneficiary", "district")),
+                List.of(exact("bank", "district")),
+                null, null, List.of(), false, null, null, List.of(), false,
+                null, null, false,
+                List.of(display("beneficiary", "district")),
+                List.of(new AggregateSpec(AggregateFunction.COUNT, null, false, null)),
+                null, false, List.of(village));
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> service.planMatch(req));
+        assertTrue(ex.getMessage().contains("grouping"), ex.getMessage());
+    }
+
+    @Test
+    void additionalTableIsScopedOnceAndKeepsAPlainEqualityWhenTypesAreUnknown() {
+        AdditionalJoin village = new AdditionalJoin(
+                CATALOG, SCHEMA, "village", "district", "district_code", List.of());
+        service.planMatch(new RecordMatchRequest(
+                List.of(exact("beneficiary", "district")),
+                List.of(exact("bank", "district")),
+                null, null, List.of(), false, null, null, List.of(), false,
+                null, null, false, List.of(), List.of(), null, false,
+                List.of(village)));
+        verify(scopeFrom, times(1)).planFrom(eq(new QualifiedTable(CATALOG, SCHEMA, "village")));
+    }
+
+    @Test
+    void additionalJoinAlignsMixedColumnTypes() {
+        stubTypes("beneficiary", "district", "varchar(40)");
+        stubTypes("village", "district_code", "bigint");
+        AdditionalJoin village = new AdditionalJoin(
+                CATALOG, SCHEMA, "village", "district", "district_code", List.of());
+        String sql = service.planMatch(new RecordMatchRequest(
+                List.of(exact("beneficiary", "m_id")),
+                List.of(exact("bank", "m_id")),
+                null, null, List.of(), false, null, null, List.of(), false,
+                null, null, false, List.of(), List.of(), null, false,
+                List.of(village))).sql();
+        assertTrue(sql.contains("TRY_CAST(src.district AS DOUBLE) = x1.district_code"), sql);
+    }
+
+    @Test
+    void additionalJoinFanOutUsesCatalogStatsInsteadOfLiveAggregates() throws Exception {
+        stubCatalogStats("m_id", 20_000L, 200_000L);
+        AdditionalJoin village = new AdditionalJoin(
+                CATALOG, SCHEMA, "village", "m_id", "m_id", List.of());
+        assertDoesNotThrow(() -> service.planMatch(new RecordMatchRequest(
+                List.of(exact("beneficiary", "m_id")),
+                List.of(exact("bank", "m_id")),
+                null, null, List.of(), false, null, null, List.of(), false,
+                null, null, false, List.of(), List.of(), null, false,
+                List.of(village))));
+        verify(jdbc, never()).queryForObject(contains("approx_distinct"), eq(Long.class));
+        verify(jdbc, never()).queryForObject(contains("count(*)"), eq(Long.class));
+    }
+
+    @Test
+    void additionalJoinLowCardinalityKeyIsRefusedByTheSameFanOutCeiling() {
+        lenient().when(jdbc.queryForObject(anyString(), eq(Long.class))).thenAnswer(inv -> {
+            String sql = inv.getArgument(0, String.class);
+            if (sql.toLowerCase().contains("count(")) {
+                return sql.contains("village") ? 50_000_000L : 1_000L;
+            }
+            if (sql.contains("approx_distinct")) {
+                if (sql.contains("village") || sql.contains("district")) {
+                    return 10L;
+                }
+                return 1_000L;
+            }
+            return 1L;
+        });
+        AdditionalJoin village = new AdditionalJoin(
+                CATALOG, SCHEMA, "village", "district", "district_code", List.of());
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> service.planMatch(
+                new RecordMatchRequest(
+                        List.of(exact("beneficiary", "m_id")),
+                        List.of(exact("bank", "m_id")),
+                        null, null, List.of(), false, null, null, List.of(), false,
+                        null, null, false, List.of(), List.of(), null, false,
+                        List.of(village))));
+        assertTrue(ex.getMessage().contains("Estimated match fan-out"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("Additional tables are included"), ex.getMessage());
+    }
+
+    @Test
     void innerJoinSqlUnchangedWhenJoinTypeOmittedOrExplicit() {
         String omitted = service.planMatch(exactMatchRequest()).sql();
         RecordMatchRequest explicit = new RecordMatchRequest(
@@ -1295,7 +1405,8 @@ class RecordMatchServiceTest {
                 base.groupByColumns(),
                 base.aggregates(),
                 25,
-                false);
+                false,
+                base.additionalJoins());
         RecordMatchService.MatchQuery planned = service.planMatch(req);
         assertTrue(planned.sql().endsWith(" LIMIT 25"), planned.sql());
         assertFalse(planned.sql().contains("LIMIT ?"), planned.sql());

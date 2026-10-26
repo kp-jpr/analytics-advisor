@@ -123,6 +123,7 @@ class AnalysisAuditServiceTest {
                 List.of(),
                 List.of(),
                 null,
-                false);
+                false,
+                List.of());
     }
 }

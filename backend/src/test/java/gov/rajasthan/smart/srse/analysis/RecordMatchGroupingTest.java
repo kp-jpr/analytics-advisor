@@ -209,7 +209,8 @@ class RecordMatchGroupingTest {
                 List.of(),
                 List.of(new AggregateSpec(AggregateFunction.COUNT, null, false, null)),
                 null,
-                false);
+                false,
+                List.of());
         String sql = matchService.planMatch(req).sql();
         assertTrue(sql.contains("count(*)"));
         assertFalse(sql.contains(" GROUP BY "));
@@ -260,7 +261,8 @@ class RecordMatchGroupingTest {
                 List.of(new DisplayColumn("iceberg", "srse", "beneficiary", "district")),
                 List.of(new AggregateSpec(AggregateFunction.COUNT, null, false, null)),
                 null,
-                false);
+                false,
+                List.of());
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> strictService.planMatch(req));
         assertTrue(ex.getMessage().contains("before grouping"), ex.getMessage());
     }
@@ -329,7 +331,7 @@ class RecordMatchGroupingTest {
             Ast.PredicateSpec rules) {
         return new RecordMatchRequest(
                 List.of(), List.of(), List.of(), List.of(), List.of(), false, null, null, List.of(), false,
-                rules, null, true, groupBy, aggregates, null, false);
+                rules, null, true, groupBy, aggregates, null, false, List.of());
     }
 
     private static QualifiedColumn col(String name) {

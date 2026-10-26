@@ -56,7 +56,21 @@ export type ExtractConfig = {
   resultLimit: number | null;
   /** When true, run COUNT(*) instead of projecting rows. */
   countOnly: boolean;
+  /** Further tables inner-joined to the source. Empty keeps the two-table query. */
+  additionalTables: AdditionalTableConfig[];
 };
+
+/** One extra table joined to the source inside the same query. `id` is list identity only. */
+export type AdditionalTableConfig = {
+  id: string;
+  ref: CascadeValue;
+  sourceColumn: string;
+  joinColumn: string;
+  displayCols: string[];
+};
+
+/** How many further tables can be joined beyond the source and destination. */
+export const MAX_ADDITIONAL_TABLES = 5;
 
 /** Report Analysis stage — filters, fuzzy/join options, grouping, comparisons. */
 export type ReportConfig = {
@@ -127,6 +141,7 @@ export const EMPTY_EXTRACT_CONFIG: ExtractConfig = {
   targetRuleRows: [],
   resultLimit: null,
   countOnly: false,
+  additionalTables: [],
 };
 
 export const EMPTY_REPORT_CONFIG: ReportConfig = {

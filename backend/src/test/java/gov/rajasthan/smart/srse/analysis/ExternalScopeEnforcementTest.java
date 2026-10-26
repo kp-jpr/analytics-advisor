@@ -207,7 +207,7 @@ class ExternalScopeEnforcementTest {
                 List.of(), List.of(),
                 List.of(new DisplayColumn("jdbc_7", "public", "people", "district")),
                 List.of(), List.of(), false, null, null, List.of(), false,
-                null, null, true, List.of(), List.of(), null, false);
+                null, null, true, List.of(), List.of(), null, false, List.of());
         StreamingResponseBody csv = matchService.matchCsv(request);
         csv.writeTo(new ByteArrayOutputStream());
 
@@ -304,7 +304,7 @@ class ExternalScopeEnforcementTest {
                 null, null, false,
                 List.of(new DisplayColumn("jdbc_7", "public", "people", "district")),
                 List.of(new AggregateSpec(AggregateFunction.COUNT, null, false, null)),
-                null, false);
+                null, false, List.of());
 
         RecordMatchService.MatchQuery planned = matchService.planMatch(grouped);
 

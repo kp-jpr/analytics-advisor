@@ -1,5 +1,6 @@
 package gov.rajasthan.smart.srse.audit;
 
+import gov.rajasthan.smart.srse.analysis.AdditionalJoin;
 import gov.rajasthan.smart.srse.analysis.DisplayColumn;
 import gov.rajasthan.smart.srse.analysis.MatchCriterion;
 import gov.rajasthan.smart.srse.analysis.MultiTargetRecordMatchRequest;
@@ -60,6 +61,11 @@ public final class QueryShapeAudit {
                 addCriteriaTables(tables, g.source());
                 addCriteriaTables(tables, g.target());
             });
+        }
+        if (req.additionalJoins() != null) {
+            for (AdditionalJoin extra : req.additionalJoins()) {
+                tables.add(extra.catalog() + "." + extra.schema() + "." + extra.table());
+            }
         }
         return String.join(",", tables);
     }

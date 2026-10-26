@@ -1,5 +1,6 @@
 package gov.rajasthan.smart.srse.savedquery;
 
+import gov.rajasthan.smart.srse.analysis.AdditionalJoin;
 import gov.rajasthan.smart.srse.analysis.ComparisonGroup;
 import gov.rajasthan.smart.srse.analysis.DisplayColumn;
 import gov.rajasthan.smart.srse.analysis.MatchCriterion;
@@ -76,6 +77,9 @@ public class SavedQueryShareGate {
         for (ComparisonGroup group : request.comparisonGroups()) {
             addCriteriaTables(tables, group.source());
             addCriteriaTables(tables, group.target());
+        }
+        for (AdditionalJoin extra : request.additionalJoins()) {
+            tables.add(extra.qualifiedTable());
         }
         return tables;
     }

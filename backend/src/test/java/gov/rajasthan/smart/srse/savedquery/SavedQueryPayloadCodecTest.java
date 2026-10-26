@@ -27,7 +27,7 @@ class SavedQueryPayloadCodecTest {
         MatchCriterion c = new MatchCriterion("iceberg", "srse", "beneficiary", "id", null);
         RecordMatchRequest request = new RecordMatchRequest(
                 List.of(c), List.of(c), List.of(), List.of(), List.of(), false, null, null,
-                List.of(), false, rules, null, false, List.of(), List.of(), null, false);
+                List.of(), false, rules, null, false, List.of(), List.of(), null, false, List.of());
 
         String text = codec.encode(request);
         RecordMatchRequest restored = codec.decode(text);
