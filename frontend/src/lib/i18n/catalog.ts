@@ -174,7 +174,7 @@ export const I18N = {
     qbAdditionalTables: "Additional tables",
     qbAdditionalTablesDesc:
       "Join more tables into this same query. Each one matches the source on an exact column. Up to {max} additional tables. Grouping stays off while extra tables are attached.",
-    qbAddTable: "Add another table",
+    qbAddTable: "Add additional table",
     qbExtraTable: "Table {n}",
     qbExtraSourceKey: "Source column",
     qbExtraJoinKey: "Column on this table",
@@ -369,7 +369,7 @@ export const I18N = {
     qbAdditionalTables: "अतिरिक्त तालिकाएँ",
     qbAdditionalTablesDesc:
       "इसी क्वेरी में और तालिकाएँ जोड़ें। हर तालिका स्रोत से एक सटीक कॉलम पर जुड़ती है। अधिकतम {max} अतिरिक्त तालिकाएँ। अतिरिक्त तालिकाओं के साथ समूहीकरण बंद रहता है।",
-    qbAddTable: "एक और तालिका जोड़ें",
+    qbAddTable: "अतिरिक्त तालिका जोड़ें",
     qbExtraTable: "तालिका {n}",
     qbExtraSourceKey: "स्रोत कॉलम",
     qbExtraJoinKey: "इस तालिका का कॉलम",

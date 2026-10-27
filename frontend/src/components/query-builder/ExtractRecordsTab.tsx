@@ -776,6 +776,14 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
             />
           </div>
         </div>
+        {dual ? (
+          <AdditionalJoinTables
+            sourceColumns={sourceColumnsDisplay}
+            tables={additionalTables}
+            defaultSourceColumn={joinKeySource}
+            onChange={(next) => patchExtract({ additionalTables: next })}
+          />
+        ) : null}
       </section>
 
       {(isCascadeComplete(sourceRef) || (dual && isCascadeComplete(targetRef))) && (
@@ -869,12 +877,6 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
               ))}
             </select>
           </div>
-          <AdditionalJoinTables
-            sourceColumns={sourceColumnsDisplay}
-            tables={additionalTables}
-            defaultSourceColumn={joinKeySource}
-            onChange={(next) => patchExtract({ additionalTables: next })}
-          />
         </section>
       )}
 
