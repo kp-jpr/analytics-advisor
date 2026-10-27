@@ -123,6 +123,8 @@ export type QueryExecutionSnapshot = {
   columns: string[];
   rows: Record<string, unknown>[];
   totalRows: number | null;
+  /** True when the stream stopped early and totalRows is only a lower bound. */
+  totalRowsIsPartial?: boolean;
   sql: string;
 };
 

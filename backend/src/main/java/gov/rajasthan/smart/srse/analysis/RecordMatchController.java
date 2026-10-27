@@ -166,7 +166,7 @@ public class RecordMatchController {
         if (req.match() == null) {
             throw new IllegalArgumentException("match is required");
         }
-        AuditedMatchQuery audited = analysisAuditService.planMatchAudited(req.match().forFullResult());
+        AuditedMatchQuery audited = analysisAuditService.planChartAudited(req.match().forFullResult());
         return queryMonitor.track(
                 audited.ticket().withKind(ActiveQueryKind.CHART_BUCKETS),
                 () -> matchService.chartBuckets(audited.query(), req.columns()));

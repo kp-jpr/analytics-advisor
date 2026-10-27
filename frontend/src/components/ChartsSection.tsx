@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -87,6 +87,8 @@ type ChartsSectionProps<T> = Readonly<{
     truncated: boolean;
     buckets: { values: string[]; count: number; other: boolean }[];
   }>;
+  /** Exact match size from a full-result chart, so the row count can leave the preview lower bound. */
+  onFullRowCount?: (totalRows: number) => void;
 }>;
 
 function chartTypeLabel(t: ChartType): string {
@@ -369,6 +371,7 @@ export function ChartsSection<T>({
   getCount,
   title = "Charts",
   loadBuckets,
+  onFullRowCount,
 }: ChartsSectionProps<T>) {
   const [chartType, setChartType] = useState<ChartType>("bar");
   const [singleDim, setSingleDim] = useState(dimensions[0]?.key ?? "");
@@ -383,6 +386,8 @@ export function ChartsSection<T>({
   const [chartNotice, setChartNotice] = useState<string | null>(null);
   const serverMode = Boolean(loadBuckets);
   const intersectionKey = intersectionDims.join("\u0001");
+  const onFullRowCountRef = useRef(onFullRowCount);
+  onFullRowCountRef.current = onFullRowCount;
 
   useEffect(() => {
     if (!loadBuckets) return undefined;
@@ -411,6 +416,7 @@ export function ChartsSection<T>({
             fullCount: combos.length,
           });
           setServerIntersectionTruncated(payload.truncated);
+          onFullRowCountRef.current?.(payload.totalRows);
         })
         .catch((err: unknown) => {
           if (!cancelled) {
@@ -441,6 +447,7 @@ export function ChartsSection<T>({
           })),
         );
         setServerSingleTruncated(payload.truncated);
+        onFullRowCountRef.current?.(payload.totalRows);
       })
       .catch((err: unknown) => {
         if (!cancelled) {

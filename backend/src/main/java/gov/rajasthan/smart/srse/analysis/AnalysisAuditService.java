@@ -41,7 +41,12 @@ public class AnalysisAuditService {
     }
 
     public AuditedMatchQuery planMatchAudited(RecordMatchRequest req) {
-        return planAudited(req, AuditActionType.QUERY_EXECUTED, ActiveQueryKind.MATCH);
+        return planAudited(req, AuditActionType.QUERY_EXECUTED, ActiveQueryKind.MATCH, true);
+    }
+
+    /** Chart grouping uses the same SQL as Run, without the row-ceiling scan that Run already did. */
+    public AuditedMatchQuery planChartAudited(RecordMatchRequest req) {
+        return planAudited(req, AuditActionType.QUERY_EXECUTED, ActiveQueryKind.CHART_BUCKETS, false);
     }
 
     public RecordMatchService.MatchQuery planPreviewAudited(RecordMatchRequest req) {
@@ -191,10 +196,12 @@ public class AnalysisAuditService {
     }
 
     private AuditedMatchQuery planAudited(
-            RecordMatchRequest req, AuditActionType action, ActiveQueryKind kind) {
+            RecordMatchRequest req, AuditActionType action, ActiveQueryKind kind, boolean estimateRows) {
         QueryExecutionTicket ticket = newTicket(kind, QueryShapeAudit.targetTablesFrom(req));
         try {
-            RecordMatchService.MatchQuery query = matchService.planMatch(req);
+            RecordMatchService.MatchQuery query = estimateRows
+                    ? matchService.planMatch(req)
+                    : matchService.planMatchForSave(req);
             auditCapture.recordBestEffort(buildDraft(action, AuditOutcome.SUCCESS, req, query, null, ticket));
             return new AuditedMatchQuery(query, ticket);
         } catch (RuntimeException ex) {

@@ -3,9 +3,8 @@
 import { useCallback, useMemo } from "react";
 import Link from "next/link";
 import { AnalysisResultsGrid } from "@/components/AnalysisResultsGrid";
-import { ChartsSection } from "@/components/ChartsSection";
 import { useShell } from "@/components/shell/ShellProviders";
-import { downloadRecordMatchExport, fetchChartBuckets, type MatchExportFormat } from "@/lib/analysisApi";
+import { downloadRecordMatchExport, type MatchExportFormat } from "@/lib/analysisApi";
 import { bufferedExportAllowed, resultPreviewIsTruncated } from "@/lib/fullResultExport";
 import { useQueryResultsStore } from "@/lib/queryResultsStore";
 import { defaultExportFilename, exportBufferedAnalyticalResult, triggerBlobDownload } from "@/lib/resultTableExport";
@@ -13,7 +12,9 @@ import { defaultExportFilename, exportBufferedAnalyticalResult, triggerBlobDownl
 export default function DashboardPage() {
   const { t } = useShell();
   const lastResult = useQueryResultsStore((s) => s.lastResult);
+  const applyFullRowCount = useQueryResultsStore((s) => s.applyFullRowCount);
   const truncated = resultPreviewIsTruncated(lastResult?.totalRows, lastResult?.rows.length ?? 0);
+  const countIsPartial = Boolean(lastResult?.totalRowsIsPartial);
 
   const numericCols = useMemo(() => {
     if (!lastResult?.rows.length) return [] as string[];
@@ -27,20 +28,11 @@ export default function DashboardPage() {
     );
   }, [lastResult]);
 
-  const labelFor = useCallback((id: string) => id, []);
+  const labelFor = useCallback((id: string) => lastResult?.columnLabels?.[id] ?? id, [lastResult?.columnLabels]);
 
-  const loadBuckets = useCallback(
-    (columns: string[]) => {
-      const req = lastResult?.matchExportRequest;
-      if (!req) {
-        return Promise.reject(new Error(
-          "Run the query again to chart every row. This screen only kept the first 10,000.",
-        ));
-      }
-      return fetchChartBuckets(req, columns);
-    },
-    [lastResult?.matchExportRequest],
-  );
+  const onFullRowCount = useCallback((totalRows: number) => {
+    applyFullRowCount(totalRows);
+  }, [applyFullRowCount]);
 
   const downloadFullExport = useCallback(
     async (format: MatchExportFormat) => {
@@ -91,7 +83,10 @@ export default function DashboardPage() {
         <div id="dash-body">
           <div className="stat-grid">
             <div className="stat">
-              <div className="num">{lastResult.totalRows ?? lastResult.rows.length}</div>
+              <div className="num">
+                {(lastResult.totalRows ?? lastResult.rows.length).toLocaleString()}
+                {countIsPartial ? "+" : ""}
+              </div>
               <div className="lbl">{t("statResultRows")}</div>
             </div>
             <div className="stat">
@@ -104,28 +99,11 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {lastResult.matchExportRequest ? (
-            <ChartsSection
-              title={t("secGroupCount")}
-              rows={lastResult.rows}
-              dimensions={lastResult.columns.map((column) => ({ key: column, label: column }))}
-              getValue={(row, key) => String(row[key] ?? "")}
-              getCount={() => 1}
-              loadBuckets={loadBuckets}
-            />
-          ) : truncated ? (
+          {!lastResult.matchExportRequest && (truncated || countIsPartial) ? (
             <p className="srse-query-notice" role="status">
               Run the query again to chart every row. This screen only kept the first 10,000.
             </p>
-          ) : (
-            <ChartsSection
-              title={t("secGroupCount")}
-              rows={lastResult.rows}
-              dimensions={lastResult.columns.map((column) => ({ key: column, label: column }))}
-              getValue={(row, key) => String(row[key] ?? "")}
-              getCount={() => 1}
-            />
-          )}
+          ) : null}
 
           <AnalysisResultsGrid
             appearance="prototype"
@@ -133,14 +111,17 @@ export default function DashboardPage() {
             rows={lastResult.rows}
             sql=""
             totalRows={lastResult.totalRows}
-            totalRowsIsPartial={truncated && lastResult.totalRows == null}
-            tooManyToDisplay={truncated}
+            totalRowsIsPartial={countIsPartial}
+            tooManyToDisplay={truncated || countIsPartial}
             displayLimit={10000}
             highlightDuplicates={false}
             dedupAvailable={false}
             dedupEnabled={false}
             onDedupToggle={() => {}}
-            showCharts={false}
+            showCharts
+            chartRequest={lastResult.matchExportRequest ?? null}
+            columnLabels={lastResult.columnLabels}
+            onFullRowCount={onFullRowCount}
             onDownloadFullExport={downloadFullExport}
             serverExportAvailable={Boolean(lastResult.matchExportRequest)}
           />

@@ -33,6 +33,8 @@ type PipelineState = {
   patchReport: (patch: Partial<ReportConfig>) => void;
   commitExtractSuccess: (extractRequest: RecordMatchRequest, result: QueryExecutionSnapshot) => void;
   commitReportSuccess: (mergedRequest: RecordMatchRequest, result: QueryExecutionSnapshot) => void;
+  /** Chart grouping counted every match. Keep the snapshot in step with that exact total. */
+  noteExactRowCount: (scope: "extract" | "report", totalRows: number) => void;
   /** Full workflow restore from a saved merged {@link RecordMatchRequest}. Does not mark extract as executed. */
   loadFromMergedRequest: (dualMode: boolean, request: RecordMatchRequest, meta?: QueryBuilderPipelineMeta) => void;
   resetWorkflow: () => void;
@@ -88,6 +90,21 @@ export const useQueryBuilderPipeline = create<PipelineState>((set, get) => ({
     set({
       lastAppliedRequest: mergedRequest,
       reportResult: result,
+    }),
+
+  noteExactRowCount: (scope, totalRows) =>
+    set((s) => {
+      const exact = { totalRows, totalRowsIsPartial: false as const };
+      if (scope === "report" && s.reportResult) {
+        return { reportResult: { ...s.reportResult, ...exact } };
+      }
+      if (s.extractResult) {
+        return { extractResult: { ...s.extractResult, ...exact } };
+      }
+      if (s.reportResult) {
+        return { reportResult: { ...s.reportResult, ...exact } };
+      }
+      return s;
     }),
 
   loadFromMergedRequest: (dualMode, request, meta) => {

@@ -50,6 +50,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.StringJoiner;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -145,6 +146,9 @@ public class RecordMatchService {
     private gov.rajasthan.smart.srse.monitoring.QueryExecutionMonitor queryMonitor;
 
     private final ConcurrentHashMap<String, CachedCatalogStats> catalogStatsCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, CachedChart> chartCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, CompletableFuture<ChartBucketsResponse>> chartInflight =
+            new ConcurrentHashMap<>();
 
     public RecordMatchService(@Qualifier("prestoJdbcTemplate") JdbcTemplate jdbc,
                               LakehouseRegistryService registry,
@@ -397,10 +401,38 @@ public class RecordMatchService {
      * Returns at most {@link #CHART_CATEGORY_CAP} groups plus an Other bucket for the rest.
      */
     public ChartBucketsResponse chartBuckets(RecordMatchRequest req, List<String> columns) {
-        return chartBuckets(planMatch(req.forFullResult()), columns);
+        return chartBuckets(planMatchForSave(req.forFullResult()), columns);
     }
 
     public ChartBucketsResponse chartBuckets(MatchQuery query, List<String> columns) {
+        String key = chartCacheKey(query, columns);
+        long now = System.currentTimeMillis();
+        CachedChart hit = chartCache.get(key);
+        if (hit != null && hit.expiresAtMillis() > now) {
+            return hit.response();
+        }
+        if (hit != null) {
+            chartCache.remove(key, hit);
+        }
+        CompletableFuture<ChartBucketsResponse> created = new CompletableFuture<>();
+        CompletableFuture<ChartBucketsResponse> existing = chartInflight.putIfAbsent(key, created);
+        if (existing != null) {
+            return existing.join();
+        }
+        try {
+            ChartBucketsResponse response = loadChartBuckets(query, columns);
+            chartCache.put(key, new CachedChart(response, System.currentTimeMillis() + CATALOG_STATS_TTL_MS));
+            created.complete(response);
+            return response;
+        } catch (RuntimeException ex) {
+            created.completeExceptionally(ex);
+            throw ex;
+        } finally {
+            chartInflight.remove(key, created);
+        }
+    }
+
+    private ChartBucketsResponse loadChartBuckets(MatchQuery query, List<String> columns) {
         List<String> grouped = validateChartColumns(query, columns);
         String sql = chartBucketSql(query.routedSql(), grouped);
         if (executionRouter != null) {
@@ -2009,6 +2041,13 @@ public class RecordMatchService {
             return null;
         }
         return new TableStats(rowCount[0] >= 0 ? rowCount[0] : null, Map.copyOf(distinct));
+    }
+
+    private record CachedChart(ChartBucketsResponse response, long expiresAtMillis) {
+    }
+
+    private static String chartCacheKey(MatchQuery query, List<String> columns) {
+        return query.routedSql() + "\n" + query.params() + "\n" + columns;
     }
 
     private record CachedCatalogStats(TableStats stats, long expiresAtMillis) {

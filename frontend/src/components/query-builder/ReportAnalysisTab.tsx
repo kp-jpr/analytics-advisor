@@ -719,6 +719,7 @@ export default function ReportAnalysisTab({
   const router = useRouter();
   const { t } = useShell();
   const setLastResult = useQueryResultsStore((s) => s.setLastResult);
+  const applyFullRowCount = useQueryResultsStore((s) => s.applyFullRowCount);
   const [controlsPanelOpen, setControlsPanelOpen] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [savedQueries, setSavedQueries] = useState<SavedQuerySummary[]>([]);
@@ -812,6 +813,12 @@ export default function ReportAnalysisTab({
   // matchTotalRows (if set at all) is a lower bound, not an exact count.
   const [matchCountIsPartial, setMatchCountIsPartial] = useState(false);
   const [chartRequest, setChartRequest] = useState<RecordMatchRequest | null>(null);
+  const onFullRowCount = useCallback((totalRows: number) => {
+    setMatchTotalRows(totalRows);
+    setMatchCountIsPartial(false);
+    applyFullRowCount(totalRows);
+    useQueryBuilderPipeline.getState().noteExactRowCount("report", totalRows);
+  }, [applyFullRowCount]);
   // True for the whole streaming lifecycle (first byte to last), not just the
   // initial network round trip — drives the grid's "(loading more…)" caption
   // and disables CSV/column-visibility until the result is actually complete.
@@ -835,13 +842,15 @@ export default function ReportAnalysisTab({
       columns: matchColumns,
       rows: matchRows,
       totalRows: matchTotalRows,
+      totalRowsIsPartial: matchCountIsPartial,
+      columnLabels: buildColumnLabels(),
       source: "report",
       matchExportRequest: lastRunRequestRef.current
         ? withoutCountOnly(lastRunRequestRef.current)
         : null,
     });
     onRunComplete?.();
-  }, [embedded, matchStatus, matchColumns, matchRows, matchTotalRows, setLastResult, onRunComplete]);
+  }, [embedded, matchStatus, matchColumns, matchRows, matchTotalRows, matchCountIsPartial, setLastResult, onRunComplete]);
   const pendingRowsRef = useRef<Record<string, unknown>[]>([]);
   const flushIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const rowsSeenRef = useRef(0);
@@ -959,6 +968,10 @@ export default function ReportAnalysisTab({
       setMatchRows(extractResult.rows);
       setMatchSql(extractResult.sql);
       setMatchTotalRows(extractResult.totalRows);
+      setMatchCountIsPartial(extractResult.totalRowsIsPartial === true);
+      setMatchTooManyToDisplay(
+        extractResult.totalRows != null && extractResult.totalRows > extractResult.rows.length,
+      );
       setMatchStatus("ok");
       lastRunRequestRef.current = lastAppliedRequest;
       setChartRequest(lastAppliedRequest ? withoutCountOnly(lastAppliedRequest) : null);
@@ -1750,10 +1763,12 @@ export default function ReportAnalysisTab({
         setChartRequest(withoutCountOnly(req));
       }
       if (embedded && streamSucceeded && req) {
+        const countIsPartial = lastStreamTotalRowsRef.current == null;
         const snapshot = {
           columns: streamColumnsRef.current,
           rows: carriedRowsRef.current,
           totalRows: lastStreamTotalRowsRef.current ?? rowsSeenRef.current,
+          totalRowsIsPartial: countIsPartial,
           sql: lastStreamSqlRef.current,
         };
         commitReportSuccess(req, snapshot);
@@ -1762,6 +1777,8 @@ export default function ReportAnalysisTab({
             columns: snapshot.columns,
             rows: snapshot.rows,
             totalRows: snapshot.totalRows ?? rowsSeenRef.current,
+            totalRowsIsPartial: countIsPartial,
+            columnLabels: buildColumnLabels(),
             source: "report",
             matchExportRequest: withoutCountOnly(req),
           });
@@ -3063,6 +3080,7 @@ export default function ReportAnalysisTab({
             }
             columnLabels={buildColumnLabels()}
             chartRequest={multiMatchMode ? null : chartRequest}
+            onFullRowCount={multiMatchMode ? undefined : onFullRowCount}
             onDedupToggle={(enabled) => {
               setDedupEnabled(enabled);
               patchPipelineReport({ dedupEnabled: enabled });

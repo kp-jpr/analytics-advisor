@@ -1973,6 +1973,9 @@ class RecordMatchServiceTest {
         assertEquals(51, summary.buckets().size());
         assertTrue(summary.buckets().get(50).other());
         assertEquals(500L, summary.buckets().get(50).count());
+
+        service.chartBuckets(limited, List.of("source_district"));
+        verify(jdbc, times(1)).queryForList(anyString(), any(Object[].class));
     }
 
     @Test

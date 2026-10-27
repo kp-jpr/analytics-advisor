@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import LakehouseCascade, {
   isCascadeComplete,
   type CascadeFetchers,
@@ -613,11 +613,13 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
   const carriedRowsRef = useRef<Record<string, unknown>[]>([]);
   const lastSqlRef = useRef("");
   const setLastResult = useQueryResultsStore((s) => s.setLastResult);
+  const applyFullRowCount = useQueryResultsStore((s) => s.applyFullRowCount);
 
   function publishExtractResult(
     columns: string[],
     rows: Record<string, unknown>[],
     totalRows: number | null,
+    totalRowsIsPartial: boolean,
   ) {
     if (columns.length === 0 || rows.length === 0) {
       return;
@@ -630,10 +632,18 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
       columns,
       rows,
       totalRows,
+      totalRowsIsPartial,
       source: "extract",
       matchExportRequest: exportReq,
     });
   }
+
+  const onFullRowCount = useCallback((totalRows: number) => {
+    setMatchTotalRows(totalRows);
+    setMatchCountIsPartial(false);
+    applyFullRowCount(totalRows);
+    useQueryBuilderPipeline.getState().noteExactRowCount("extract", totalRows);
+  }, [applyFullRowCount]);
 
   const sourceRefKey = `${sourceRef.catalog}.${sourceRef.schema}.${sourceRef.table}`;
   const targetRefKey = `${targetRef.catalog}.${targetRef.schema}.${targetRef.table}`;
@@ -688,13 +698,12 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
       lastRunRequestRef.current = baseExtractRequest;
       setChartRequest(withoutCountOnly(baseExtractRequest));
     }
-    if (
-      extractResult.totalRows != null
-      && extractResult.totalRows > extractResult.rows.length
-    ) {
+    const previewShort = extractResult.totalRows != null
+      && extractResult.totalRows > extractResult.rows.length;
+    if (previewShort) {
       setMatchTooManyToDisplay(true);
-      setMatchCountIsPartial(true);
     }
+    setMatchCountIsPartial(extractResult.totalRowsIsPartial === true);
   }, [extractResult, baseExtractRequest]);
 
   const requestReady = buildExtractRequest(dualMode, extract) !== null;
@@ -746,7 +755,7 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
     return applyJoinColumnFuzzy(built, useQueryBuilderPipeline.getState().report);
   }
 
-  function commitSuccess(req: RecordMatchRequest, totalRows: number | null, sql: string) {
+  function commitSuccess(req: RecordMatchRequest, totalRows: number | null, sql: string, partial: boolean) {
     const exported = buildExtractExportRequest(dualMode, extract);
     const exportReq = exported
       ? applyJoinColumnFuzzy(exported, useQueryBuilderPipeline.getState().report)
@@ -755,6 +764,7 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
       columns: streamColumnsRef.current,
       rows: carriedRowsRef.current,
       totalRows,
+      totalRowsIsPartial: partial,
       sql,
     });
   }
@@ -823,8 +833,8 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
             flushPendingRows();
             setMatchTotalRows(totalRows);
             setMatchStatus("ok");
-            publishExtractResult(streamColumnsRef.current, carriedRowsRef.current, totalRows);
-            commitSuccess(req, totalRows, lastSqlRef.current);
+            publishExtractResult(streamColumnsRef.current, carriedRowsRef.current, totalRows, false);
+            commitSuccess(req, totalRows, lastSqlRef.current, false);
           },
           onError: (message) => {
             setMatchError(presentQueryError(message, t("msgAnalyticalEngineDown")));
@@ -845,8 +855,9 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
           streamColumnsRef.current,
           carriedRowsRef.current,
           rowsSeenRef.current,
+          true,
         );
-        commitSuccess(req, rowsSeenRef.current, lastSqlRef.current);
+        commitSuccess(req, rowsSeenRef.current, lastSqlRef.current, true);
       } else {
         setMatchError(presentQueryError(
           err instanceof Error ? err.message : String(err),
@@ -1218,6 +1229,7 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
             onDownloadFullCsv={() => downloadFullExport("csv")}
             onDownloadFullExport={downloadFullExport}
             chartRequest={chartRequest}
+            onFullRowCount={onFullRowCount}
             highlightDuplicates={false}
             dedupAvailable={false}
             dedupEnabled={false}

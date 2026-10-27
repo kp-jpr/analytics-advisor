@@ -491,21 +491,43 @@ export type ChartBucketsResponse = {
   buckets: ChartBucket[];
 };
 
+const chartBucketCache = new Map<string, ChartBucketsResponse>();
+const chartBucketInflight = new Map<string, Promise<ChartBucketsResponse>>();
+
+function chartBucketCacheKey(req: RecordMatchRequest, columns: string[]): string {
+  return JSON.stringify({ match: req, columns });
+}
+
 /** Full-result value counts for charts. The 10,000-row screen preview is not counted. */
 export async function fetchChartBuckets(
   req: RecordMatchRequest,
   columns: string[],
 ): Promise<ChartBucketsResponse> {
-  const res = await authorizedFetch(`${API_BASE}/api/analysis/match/chart-buckets`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({ match: req, columns }),
-  });
-  if (!res.ok) {
-    throw new Error(`Analysis service error ${res.status}: ${await readApiErrorMessage(res)}`);
+  const key = chartBucketCacheKey(req, columns);
+  const cached = chartBucketCache.get(key);
+  if (cached) return cached;
+  const pending = chartBucketInflight.get(key);
+  if (pending) return pending;
+  const request = (async () => {
+    const res = await authorizedFetch(`${API_BASE}/api/analysis/match/chart-buckets`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ match: req, columns }),
+    });
+    if (!res.ok) {
+      throw new Error(`Analysis service error ${res.status}: ${await readApiErrorMessage(res)}`);
+    }
+    const body = (await res.json()) as ChartBucketsResponse;
+    chartBucketCache.set(key, body);
+    return body;
+  })();
+  chartBucketInflight.set(key, request);
+  try {
+    return await request;
+  } finally {
+    chartBucketInflight.delete(key);
   }
-  return res.json() as Promise<ChartBucketsResponse>;
 }
 
 export type MatchExportFormat = "csv" | "json" | "xml" | "xlsx";
