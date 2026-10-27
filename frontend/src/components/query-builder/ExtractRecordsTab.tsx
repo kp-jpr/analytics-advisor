@@ -8,6 +8,8 @@ import LakehouseCascade, {
 } from "@/components/LakehouseCascade";
 import { AnalysisResultsGrid } from "@/components/AnalysisResultsGrid";
 import { BasicRuleListEditor } from "@/components/query-builder/BasicRuleListEditor";
+import { shouldStopMatchStream } from "@/lib/matchStreamLimit";
+import { presentQueryError } from "@/lib/queryErrorText";
 import {
   downloadRecordMatchExport,
   type MatchExportFormat,
@@ -27,9 +29,11 @@ import {
 import { useQueryResultsStore } from "@/lib/queryResultsStore";
 import { useShell } from "@/components/shell/ShellProviders";
 import {
+  applyJoinColumnFuzzy,
   buildExtractExportRequest,
   buildExtractRequest,
   clearDisplayColumnSelection,
+  joinColumnsUseFuzzy,
   retainValidDisplayColumns,
   selectAllDisplayColumns,
   toggleDisplayColumnSelection,
@@ -51,15 +55,14 @@ const REGISTRY_FETCHERS: CascadeFetchers = {
   listTables: listAnalysisTables,
 };
 
-const JOIN_TYPE_OPTIONS: { value: JoinType; label: string }[] = [
-  { value: "INNER", label: "Only matching records" },
-  { value: "LEFT", label: "All source records" },
-  { value: "RIGHT", label: "All target records" },
-  { value: "FULL", label: "All records from both" },
+const JOIN_TYPE_OPTIONS: { value: JoinType; labelKey: "qbJoinOnlyMatching" | "qbJoinAllSource" | "qbJoinAllTarget" | "qbJoinAllBoth" }[] = [
+  { value: "INNER", labelKey: "qbJoinOnlyMatching" },
+  { value: "LEFT", labelKey: "qbJoinAllSource" },
+  { value: "RIGHT", labelKey: "qbJoinAllTarget" },
+  { value: "FULL", labelKey: "qbJoinAllBoth" },
 ];
 
 const MAX_DISPLAYED_ROWS = 10000;
-const MAX_ROWS_TO_PARSE = 200000;
 
 function fillCatalog(template: string, values: Record<string, string | number>): string {
   return template.replaceAll(/\{(\w+)\}/g, (_match, name: string) => {
@@ -331,7 +334,7 @@ function AdditionalJoinRow({
             >
               {JOIN_TYPE_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
-                  {option.label}
+                  {t(option.labelKey)}
                 </option>
               ))}
             </select>
@@ -364,10 +367,69 @@ type ExtractRecordsTabProps = {
   onGoReport?: () => void;
 };
 
+/** Fuzzy % for the columns selected in the join dropdowns. Hidden unless one of those columns is name-like. */
+export function JoinColumnFuzzyFields({
+  sourceColumn,
+  targetColumn,
+  threshold,
+  ignoreSpaces,
+  caseSensitive,
+  onThreshold,
+  onIgnoreSpaces,
+  onCaseSensitive,
+}: {
+  sourceColumn: string;
+  targetColumn: string;
+  threshold: number;
+  ignoreSpaces: boolean;
+  caseSensitive: boolean;
+  onThreshold: (value: number) => void;
+  onIgnoreSpaces: (value: boolean) => void;
+  onCaseSensitive: (value: boolean) => void;
+}) {
+  const { t } = useShell();
+  if (!joinColumnsUseFuzzy(sourceColumn, targetColumn)) return null;
+  return (
+    <div className="field" style={{ marginTop: 12, maxWidth: 360 }}>
+      <label htmlFor="extract-join-fuzzy">{t("qbJoinFuzzyPercent")}</label>
+      <p className="desc">{t("qbJoinFuzzyHint")}</p>
+      <input
+        id="extract-join-fuzzy"
+        type="number"
+        min={0}
+        max={100}
+        value={threshold}
+        onChange={(e) => onThreshold(Number(e.target.value))}
+      />
+      <label style={{ display: "block", marginTop: 8 }}>
+        <input
+          type="checkbox"
+          checked={ignoreSpaces}
+          onChange={(e) => onIgnoreSpaces(e.target.checked)}
+        />{" "}
+        {t("qbFuzzyIgnoreSpaces")}
+      </label>
+      <label style={{ display: "block" }}>
+        <input
+          type="checkbox"
+          checked={caseSensitive}
+          onChange={(e) => onCaseSensitive(e.target.checked)}
+        />{" "}
+        {t("qbFuzzyCaseSensitive")}
+      </label>
+    </div>
+  );
+}
+
 export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecordsTabProps>) {
+  const { t, modeKey } = useShell();
   const dualMode = useQueryBuilderPipeline((s) => s.dualMode);
   const extract = useQueryBuilderPipeline((s) => s.extract);
   const patchExtract = useQueryBuilderPipeline((s) => s.patchExtract);
+  const patchReport = useQueryBuilderPipeline((s) => s.patchReport);
+  const joinFuzzyThresholdPercent = useQueryBuilderPipeline((s) => s.report.joinFuzzyThresholdPercent);
+  const joinFuzzyIgnoreSpaces = useQueryBuilderPipeline((s) => s.report.joinFuzzyIgnoreSpaces);
+  const joinFuzzyCaseSensitive = useQueryBuilderPipeline((s) => s.report.joinFuzzyCaseSensitive);
   const commitExtractSuccess = useQueryBuilderPipeline((s) => s.commitExtractSuccess);
   const extractResult = useQueryBuilderPipeline((s) => s.extractResult);
   const baseExtractRequest = useQueryBuilderPipeline((s) => s.baseExtractRequest);
@@ -558,7 +620,10 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
     }
     const controller = new AbortController();
     const timer = setTimeout(() => {
-      const req = buildExtractRequest(dualMode, extract);
+      const built = buildExtractRequest(dualMode, extract);
+      const req = built
+        ? applyJoinColumnFuzzy(built, useQueryBuilderPipeline.getState().report)
+        : null;
       if (!req || controller.signal.aborted) return;
       setSqlPreviewLoading(true);
       setSqlPreviewError(null);
@@ -570,7 +635,10 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
           if (controller.signal.aborted) return;
           if (err instanceof DOMException && err.name === "AbortError") return;
           setSqlPreview(null);
-          setSqlPreviewError(err instanceof Error ? err.message : String(err));
+          setSqlPreviewError(presentQueryError(
+            err instanceof Error ? err.message : String(err),
+            t("msgAnalyticalEngineDown"),
+          ));
         })
         .finally(() => {
           if (!controller.signal.aborted) setSqlPreviewLoading(false);
@@ -580,17 +648,22 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
       controller.abort();
       clearTimeout(timer);
     };
-  }, [dualMode, extract, requestReady]);
+  }, [dualMode, extract, joinFuzzyCaseSensitive, joinFuzzyIgnoreSpaces, joinFuzzyThresholdPercent, requestReady, t]);
 
   const sourceColumnsDisplay = isCascadeComplete(sourceRef) ? sourceColumns : [];
   const targetColumnsDisplay = mode === "join" && isCascadeComplete(targetRef) ? targetColumns : [];
 
   function buildRequest(): RecordMatchRequest | null {
-    return buildExtractRequest(dualMode, extract);
+    const built = buildExtractRequest(dualMode, extract);
+    if (!built) return null;
+    return applyJoinColumnFuzzy(built, useQueryBuilderPipeline.getState().report);
   }
 
   function commitSuccess(req: RecordMatchRequest, totalRows: number | null, sql: string) {
-    const exportReq = buildExtractExportRequest(dualMode, extract) ?? req;
+    const exported = buildExtractExportRequest(dualMode, extract);
+    const exportReq = exported
+      ? applyJoinColumnFuzzy(exported, useQueryBuilderPipeline.getState().report)
+      : req;
     commitExtractSuccess(exportReq, {
       columns: streamColumnsRef.current,
       rows: carriedRowsRef.current,
@@ -652,12 +725,10 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
             if (carriedRowsRef.current.length < MAX_DISPLAYED_ROWS) {
               carriedRowsRef.current.push(row);
             }
-            if (rowsSeenRef.current === MAX_ROWS_TO_PARSE + 1) {
+            if (shouldStopMatchStream(rowsSeenRef.current)) {
+              setMatchTooManyToDisplay(true);
               setMatchCountIsPartial(true);
               controller.abort();
-            }
-            if (rowsSeenRef.current === MAX_DISPLAYED_ROWS + 1) {
-              setMatchTooManyToDisplay(true);
             }
           },
           onDone: (totalRows) => {
@@ -668,7 +739,7 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
             commitSuccess(req, totalRows, lastSqlRef.current);
           },
           onError: (message) => {
-            setMatchError(message);
+            setMatchError(presentQueryError(message, t("msgAnalyticalEngineDown")));
             setMatchStatus("error");
           },
         },
@@ -679,7 +750,7 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
         setMatchStatus((s) => (s === "loading" ? "ok" : s));
       }
     } catch (err: unknown) {
-      if (controller.signal.aborted && rowsSeenRef.current > MAX_ROWS_TO_PARSE) {
+      if (controller.signal.aborted && shouldStopMatchStream(rowsSeenRef.current)) {
         flushPendingRows();
         setMatchStatus("ok");
         publishExtractResult(
@@ -689,7 +760,10 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
         );
         commitSuccess(req, rowsSeenRef.current, lastSqlRef.current);
       } else {
-        setMatchError(err instanceof Error ? err.message : String(err));
+        setMatchError(presentQueryError(
+          err instanceof Error ? err.message : String(err),
+          t("msgAnalyticalEngineDown"),
+        ));
         setMatchStatus("error");
       }
     } finally {
@@ -712,7 +786,10 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
       setSqlPreview(await fetchMatchSql(req));
     } catch (err: unknown) {
       setSqlPreview(null);
-      setSqlPreviewError(err instanceof Error ? err.message : String(err));
+      setSqlPreviewError(presentQueryError(
+        err instanceof Error ? err.message : String(err),
+        t("msgAnalyticalEngineDown"),
+      ));
     } finally {
       setSqlPreviewLoading(false);
     }
@@ -738,7 +815,6 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
     URL.revokeObjectURL(url);
   }
 
-  const { t, modeKey } = useShell();
   const dual = mode === "join";
   const previewText =
     sqlPreview ??
@@ -872,11 +948,21 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
             >
               {JOIN_TYPE_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
-                  {o.label}
+                  {t(o.labelKey)}
                 </option>
               ))}
             </select>
           </div>
+          <JoinColumnFuzzyFields
+            sourceColumn={joinKeySource}
+            targetColumn={joinKeyTarget}
+            threshold={joinFuzzyThresholdPercent}
+            ignoreSpaces={joinFuzzyIgnoreSpaces}
+            caseSensitive={joinFuzzyCaseSensitive}
+            onThreshold={(value) => patchReport({ joinFuzzyThresholdPercent: value })}
+            onIgnoreSpaces={(value) => patchReport({ joinFuzzyIgnoreSpaces: value })}
+            onCaseSensitive={(value) => patchReport({ joinFuzzyCaseSensitive: value })}
+          />
         </section>
       )}
 

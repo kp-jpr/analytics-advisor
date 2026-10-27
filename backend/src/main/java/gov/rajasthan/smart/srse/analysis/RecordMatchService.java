@@ -153,6 +153,22 @@ public class RecordMatchService {
      * Validates the request and builds the Presto match query without executing it.
      */
     public MatchQuery planMatch(RecordMatchRequest req) {
+        PlanTrace trace = new PlanTrace();
+        trace.tables = req.singleSource() ? 1 : 2 + req.additionalJoins().size();
+        trace.joins = joinLabel(req);
+        PLAN_TRACE.set(trace);
+        long started = System.nanoTime();
+        try {
+            MatchQuery query = planMatchBody(req);
+            trace.planMs = elapsedMs(started);
+            return query;
+        } catch (RuntimeException ex) {
+            PLAN_TRACE.remove();
+            throw ex;
+        }
+    }
+
+    private MatchQuery planMatchBody(RecordMatchRequest req) {
         validateExtractRunOptions(req);
         MatchQuery query;
         if (req.singleSource()) {
@@ -227,11 +243,11 @@ public class RecordMatchService {
     }
 
     public StreamingResponseBody match(RecordMatchRequest req) {
-        return streamResults(planMatch(req), failure -> { });
+        return match(planMatch(req));
     }
 
     public StreamingResponseBody match(RecordMatchService.MatchQuery query) {
-        return streamResults(query, failure -> { });
+        return match(query, failure -> { });
     }
 
     /**
@@ -241,7 +257,7 @@ public class RecordMatchService {
      */
     public StreamingResponseBody match(
             RecordMatchService.MatchQuery query, java.util.function.Consumer<Throwable> onEngineFailure) {
-        return streamResults(query, onEngineFailure);
+        return streamResults(query, onEngineFailure, takePlanTrace());
     }
 
     /**
@@ -939,9 +955,11 @@ public class RecordMatchService {
             dedupAlias = appendDedupSelect(select, outerColumns, req, join);
             appendMatchScoreSelect(select, outerColumns, req, groups);
         }
-        appendJoinConditions(onClause, where, params, groups, joinType);
+        List<Object> onParams = new ArrayList<>();
+        List<Object> whereParams = new ArrayList<>();
+        appendJoinConditions(onClause, where, onParams, whereParams, groups, joinType);
         if (!req.grouped()) {
-            appendMismatchOnlyFilter(where, req, comparisonPlans, params,
+            appendMismatchOnlyFilter(where, req, comparisonPlans, whereParams,
                     !req.comparisonGroups().isEmpty() && joinType != JoinType.INNER
                             ? noCounterpartPredicate(joinType, joinKeyRefs(join)) : null);
         }
@@ -957,7 +975,8 @@ public class RecordMatchService {
         String sourceFrom = fromSide(sourceScope, "src", sourceUnnests, scopeParams);
         String targetFrom = fromSide(targetScope, "tgt", targetUnnests, scopeParams);
         StringBuilder extraJoins = new StringBuilder();
-        appendAdditionalJoins(req, sides, select, outerColumns, extraJoins, scopeParams, plannedExtras);
+        appendAdditionalJoins(
+                req, sides, select, outerColumns, extraJoins, where, onParams, whereParams, scopeParams, plannedExtras);
         String baseSql = "SELECT " + select + " FROM " + sourceFrom + " " + joinType.joinKeyword() + " "
                 + targetFrom + " ON " + onClause + extraJoins + " WHERE " + where;
 
@@ -970,9 +989,11 @@ public class RecordMatchService {
         String finalSql = req.grouped()
                 ? baseSql
                 : wrapWithDedup(baseSql, req, join, dedupAlias);
-        List<Object> allParams = new ArrayList<>(scopeParams.size() + params.size());
+        List<Object> allParams = new ArrayList<>(scopeParams.size() + params.size() + onParams.size() + whereParams.size());
         allParams.addAll(scopeParams);
         allParams.addAll(params);
+        allParams.addAll(onParams);
+        allParams.addAll(whereParams);
         return new MatchQuery(finalSql, allParams, List.copyOf(outerColumns));
     }
 
@@ -1014,8 +1035,9 @@ public class RecordMatchService {
      * Further tables joined to the source. An empty list leaves the two-table
      * SQL unchanged. A null join type stays {@code INNER JOIN}. Each extra
      * table is described once, rules sit inside its derived table, and columns
-     * are projected under {@code extraN_}. The equality uses the same type
-     * alignment as the primary join so a varchar/bigint pair stays a hash join.
+     * are projected under {@code extraN_}. An id join stays an equality with the
+     * same type alignment as the primary join. A name join with a threshold uses
+     * the same blocking key and Levenshtein predicate as the primary fuzzy join.
      */
     private void appendAdditionalJoins(
             RecordMatchRequest req,
@@ -1023,6 +1045,9 @@ public class RecordMatchService {
             StringBuilder select,
             Set<String> outerColumns,
             StringBuilder extraJoinSql,
+            StringBuilder where,
+            List<Object> onParams,
+            List<Object> whereParams,
             List<Object> scopeParams,
             List<PlannedExtra> plannedExtras) {
         if (req.additionalJoins().isEmpty() || req.grouped()) {
@@ -1033,12 +1058,18 @@ public class RecordMatchService {
             AdditionalJoin extra = req.additionalJoins().get(i);
             String alias = "x" + n;
             PlannedExtra planned = plannedExtras.get(i);
-            TypeCoercion.Aligned aligned = alignAdditionalJoin(sides, extra, alias, planned.columns());
             JoinType extraType = extra.effectiveJoinType();
             String keyword = extraType == JoinType.INNER ? "INNER JOIN" : extraType.joinKeyword();
             extraJoinSql.append(' ').append(keyword).append(' ')
                     .append(fromSide(planned.scope(), alias, List.of(), scopeParams))
-                    .append(" ON ").append(aligned.left()).append(" = ").append(aligned.right());
+                    .append(" ON ");
+            if (additionalJoinIsFuzzy(extra)) {
+                appendAdditionalFuzzyJoin(
+                        extraJoinSql, where, onParams, whereParams, sides, extra, alias, planned.columns(), extraType);
+            } else {
+                TypeCoercion.Aligned aligned = alignAdditionalJoin(sides, extra, alias, planned.columns());
+                extraJoinSql.append(aligned.left()).append(" = ").append(aligned.right());
+            }
             String joinOut = "extra" + n + "_" + extra.joinColumn();
             if (!outerColumns.contains(joinOut)) {
                 appendSelect(select, outerColumns, alias, extra.joinColumn(),
@@ -1323,7 +1354,8 @@ public class RecordMatchService {
      * product, which is why ANY_OF is pivoted with UNNEST in
      * {@link #sideSql} instead of being written as alternatives here.
      */
-    private void appendJoinConditions(StringBuilder onClause, StringBuilder where, List<Object> params,
+    private void appendJoinConditions(StringBuilder onClause, StringBuilder where,
+                                      List<Object> onParams, List<Object> whereParams,
                                       List<GroupPlan> groups, JoinType joinType) {
         for (int i = 0; i < groups.size(); i++) {
             GroupPlan group = groups.get(i);
@@ -1331,7 +1363,7 @@ public class RecordMatchService {
                 onClause.append(" AND ");
             }
             if (group.fuzzy()) {
-                appendFuzzyJoin(onClause, where, params, i, group, joinType);
+                appendFuzzyJoin(onClause, where, onParams, whereParams, i, group, joinType);
             } else {
                 onClause.append(group.sourceRef()).append(" = ").append(group.targetRef());
             }
@@ -1343,7 +1375,8 @@ public class RecordMatchService {
      * for INNER only — for outer joins it moves to ON so unmatched preserved-side
      * rows are not filtered away (see class javadoc / CLAUDE.md Analysis section).
      */
-    private void appendFuzzyJoin(StringBuilder onClause, StringBuilder where, List<Object> params,
+    private void appendFuzzyJoin(StringBuilder onClause, StringBuilder where,
+                                 List<Object> onParams, List<Object> whereParams,
                                  int index, GroupPlan group, JoinType joinType) {
         if (group.group().fuzzyThresholdPercent() == null) {
             throw new IllegalArgumentException(
@@ -1360,10 +1393,51 @@ public class RecordMatchService {
                 group.sourceRef(), group.targetRef(), fuzzyOptions) + " >= ?";
         if (joinType == JoinType.INNER) {
             appendWhereClause(where, similarity);
+            whereParams.add(threshold / 100.0);
         } else {
             onClause.append(" AND ").append(similarity);
+            onParams.add(threshold / 100.0);
         }
-        params.add(threshold / 100.0);
+    }
+
+    /** Fuzzy only when a threshold was sent and one of the two join columns contains "name". */
+    private static boolean additionalJoinIsFuzzy(AdditionalJoin extra) {
+        if (extra.fuzzyThresholdPercent() == null) {
+            return false;
+        }
+        String source = extra.sourceColumn() == null ? "" : extra.sourceColumn().toLowerCase();
+        String join = extra.joinColumn() == null ? "" : extra.joinColumn().toLowerCase();
+        return source.contains("name") || join.contains("name");
+    }
+
+    private void appendAdditionalFuzzyJoin(
+            StringBuilder onClause,
+            StringBuilder where,
+            List<Object> onParams,
+            List<Object> whereParams,
+            Sides sides,
+            AdditionalJoin extra,
+            String alias,
+            Map<String, RegisteredColumn> described,
+            JoinType joinType) {
+        Double raw = extra.fuzzyThresholdPercent();
+        if (raw == null || raw < 0 || raw > 100) {
+            throw new IllegalArgumentException("fuzzyThresholdPercent must be between 0 and 100");
+        }
+        String left = TypeCoercion.asText(
+                "src." + extra.sourceColumn(), familyOf(sides.sourceColumns(), extra.sourceColumn()));
+        String right = TypeCoercion.asText(
+                alias + "." + extra.joinColumn(), familyOf(described, extra.joinColumn()));
+        FuzzyOptions options = extra.fuzzyOptions();
+        onClause.append(blockingKeyExpr(left, options)).append(" = ").append(blockingKeyExpr(right, options));
+        String similarity = FuzzyMatchSql.similarityExpr(left, right, options) + " >= ?";
+        if (joinType == JoinType.INNER) {
+            appendWhereClause(where, similarity);
+            whereParams.add(raw / 100.0);
+        } else {
+            onClause.append(" AND ").append(similarity);
+            onParams.add(raw / 100.0);
+        }
     }
 
     private String appendDedupSelect(StringBuilder select, Set<String> outerColumns, RecordMatchRequest req,
@@ -1417,37 +1491,47 @@ public class RecordMatchService {
     }
 
     private StreamingResponseBody streamResults(
-            MatchQuery query, java.util.function.Consumer<Throwable> onEngineFailure) {
+            MatchQuery query,
+            java.util.function.Consumer<Throwable> onEngineFailure,
+            PlanTrace trace) {
         String displaySql = renderForDisplay(query.routedSql(), query.params());
         return outputStream -> {
-            writeLine(outputStream, Map.of("type", "meta", "columns", query.columns(), "sql", displaySql));
+            long executeStarted = System.nanoTime();
             try {
-                JdbcTemplate executionJdbc = ScopedJdbc.withTimeout(
-                        jdbcFor(query), guardrails.queryTimeoutSeconds());
-                ColumnMapRowMapper rowMapper = new ColumnMapRowMapper();
-                long[] totalRows = {0};
-                executionJdbc.query(query.routedSql(), query.params().toArray(), (RowCallbackHandler) rs -> {
-                    Map<String, Object> row = rowMapper.mapRow(rs, 0);
-                    try {
-                        writeLine(outputStream, Map.of("type", "row", "data", row));
-                    } catch (IOException e) {
-                        JdbcStatements.cancel(rs.getStatement());
-                        throw new UncheckedIOException(e);
-                    }
-                    totalRows[0]++;
-                });
-                writeLine(outputStream, Map.of("type", "done", "totalRows", totalRows[0]));
-            } catch (UncheckedIOException e) {
-                log.warn("Match stream closed by the client; the query was cancelled");
-                throw e.getCause();
-            } catch (Exception e) {
-                log.warn("Match query failed: {}", e.toString());
-                onEngineFailure.accept(e);
+                writeLine(outputStream, Map.of("type", "meta", "columns", query.columns(), "sql", displaySql));
                 try {
-                    writeLine(outputStream, Map.of(
-                            "type", "error", "message", QueryFailureMessages.officerMessage(e)));
-                } catch (IOException io) {
-                    log.warn("Could not report the match error because the client is gone");
+                    JdbcTemplate executionJdbc = ScopedJdbc.withTimeout(
+                            jdbcFor(query), guardrails.queryTimeoutSeconds());
+                    ColumnMapRowMapper rowMapper = new ColumnMapRowMapper();
+                    long[] totalRows = {0};
+                    executionJdbc.query(query.routedSql(), query.params().toArray(), (RowCallbackHandler) rs -> {
+                        Map<String, Object> row = rowMapper.mapRow(rs, 0);
+                        try {
+                            writeLine(outputStream, Map.of("type", "row", "data", row));
+                        } catch (IOException e) {
+                            JdbcStatements.cancel(rs.getStatement());
+                            throw new UncheckedIOException(e);
+                        }
+                        totalRows[0]++;
+                    });
+                    writeLine(outputStream, Map.of("type", "done", "totalRows", totalRows[0]));
+                } catch (UncheckedIOException e) {
+                    log.warn("Match stream closed by the client; the query was cancelled");
+                    throw e.getCause();
+                } catch (Exception e) {
+                    log.warn("Match query failed: {}", e.toString());
+                    onEngineFailure.accept(e);
+                    try {
+                        writeLine(outputStream, Map.of(
+                                "type", "error", "message", QueryFailureMessages.officerMessage(e)));
+                    } catch (IOException io) {
+                        log.warn("Could not report the match error because the client is gone");
+                    }
+                }
+            } finally {
+                if (trace != null) {
+                    log.info("{}", planTimingMessage(
+                            trace.planMs, elapsedMs(executeStarted), trace.tables, trace.joins, trace.estimateSource()));
                 }
             }
         };
@@ -1757,7 +1841,79 @@ public class RecordMatchService {
                     table.qualifiedName(), ex.toString());
             return TableStats.EMPTY;
         }
-        return new TableStats(rowCount[0] >= 0 ? rowCount[0] : null, Map.copyOf(distinct));
+        TableStats stats = new TableStats(rowCount[0] >= 0 ? rowCount[0] : null, Map.copyOf(distinct));
+        noteCatalogStats(stats);
+        return stats;
+    }
+
+    /** One plan's estimate path. Consumed by the execute log so planning itself adds no query. */
+    static final class PlanTrace {
+        long planMs;
+        int tables;
+        String joins = "none";
+        boolean catalogStats;
+        boolean liveCount;
+
+        String estimateSource() {
+            if (catalogStats && liveCount) {
+                return "mixed";
+            }
+            if (liveCount) {
+                return "live-count";
+            }
+            if (catalogStats) {
+                return "catalog-stats";
+            }
+            return "not-estimated";
+        }
+    }
+
+    private static final ThreadLocal<PlanTrace> PLAN_TRACE = new ThreadLocal<>();
+
+    PlanTrace takePlanTrace() {
+        PlanTrace trace = PLAN_TRACE.get();
+        PLAN_TRACE.remove();
+        return trace;
+    }
+
+    static String planTimingMessage(long planMs, long executeMs, int tables, String joins, String estimate) {
+        return "Match planMs=" + planMs
+                + " executeMs=" + executeMs
+                + " tables=" + tables
+                + " joins=" + joins
+                + " estimate=" + estimate;
+    }
+
+    private static long elapsedMs(long startedNanos) {
+        return Math.max(0L, (System.nanoTime() - startedNanos) / 1_000_000L);
+    }
+
+    private static String joinLabel(RecordMatchRequest req) {
+        if (req.singleSource()) {
+            return "none";
+        }
+        StringBuilder joins = new StringBuilder(JoinType.effective(req.joinType()).name());
+        for (AdditionalJoin extra : req.additionalJoins()) {
+            joins.append('+').append(extra.effectiveJoinType().name());
+        }
+        return joins.toString();
+    }
+
+    private void noteCatalogStats(TableStats stats) {
+        if (stats.rowCount() == null && stats.distinctByColumn().isEmpty()) {
+            return;
+        }
+        PlanTrace trace = PLAN_TRACE.get();
+        if (trace != null) {
+            trace.catalogStats = true;
+        }
+    }
+
+    private void noteLiveCount() {
+        PlanTrace trace = PLAN_TRACE.get();
+        if (trace != null) {
+            trace.liveCount = true;
+        }
     }
 
     /** Catalog statistics for one table; every field may be absent. */
@@ -1770,6 +1926,7 @@ public class RecordMatchService {
     }
 
     private long queryRowCount(QualifiedTable table) {
+        noteLiveCount();
         String sql = "SELECT count(*) FROM " + table.qualifiedName();
         Long count = queryLong(sql, List.of(), table);
         return count == null ? 0 : Math.max(0, count);
@@ -1779,6 +1936,7 @@ public class RecordMatchService {
         if (scope.isEmptyResult()) {
             return 0;
         }
+        noteLiveCount();
         String sql = "SELECT count(*) FROM (SELECT * FROM " + scope.qualifiedName() + " t WHERE "
                 + scope.whereSql() + ")";
         Long count = queryLong(sql, scope.bindValues(), table);
@@ -1832,6 +1990,7 @@ public class RecordMatchService {
             ScopeFilteredFrom scope,
             String valueExpression,
             QualifiedTable table) {
+        noteLiveCount();
         boolean external = executionRouter != null && executionRouter.containsExternal(table);
         String aggregate = external
                 ? "COUNT(DISTINCT " + valueExpression + ")"

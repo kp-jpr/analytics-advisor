@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { RuleOperator } from "@/lib/analysisApi";
+import { translate } from "@/lib/i18n/catalog";
 import {
   buildExtractRequest,
   buildMergedRequest,
   clearDisplayColumnSelection,
+  joinColumnsUseFuzzy,
   preserveExtractDisplayColumnsOnSave,
   retainValidDisplayColumns,
   selectAllDisplayColumns,
@@ -203,6 +205,12 @@ describe("ordinary source rules", () => {
     }))!;
     expect(inner.additionalJoins?.[0]).not.toHaveProperty("joinType");
     expect(inner.additionalJoins?.[0]).not.toHaveProperty("rules");
+    expect(translate("en", "qbJoinAllSource")).toBe("All source records");
+    expect(translate("hi", "qbJoinOnlyMatching")).toBe("केवल मेल खाते रिकॉर्ड");
+    expect(translate("hi", "qbJoinAllSource")).toBe("स्रोत के सभी रिकॉर्ड");
+    expect(translate("hi", "qbJoinAllTarget")).toBe("लक्ष्य के सभी रिकॉर्ड");
+    expect(translate("hi", "qbJoinAllBoth")).toBe("दोनों तालिकाओं के सभी रिकॉर्ड");
+    expect(translate("hi", "msgAnalyticalEngineDown")).not.toBe(translate("en", "msgAnalyticalEngineDown"));
   });
 
   it("maps destination attributes separately and still requires a join key", () => {
@@ -649,5 +657,71 @@ describe("report-stage source filters", () => {
     )!;
     expect(populatedButOff.sourceRules).toBeUndefined();
     expect(buildExtractRequest(true, extract())!.sourceRules).toBeUndefined();
+  });
+
+  it("fuzzes a name join column and leaves an id join exact when full_name is only displayed", () => {
+    const named = buildMergedRequest(
+      true,
+      extract({
+        joinKeySource: "full_name",
+        joinKeyTarget: "account_holder_name",
+        displayCols: ["district"],
+      }),
+      report({ joinFuzzyThresholdPercent: 90 }),
+    )!;
+    expect(named.sourceCriteria[0]?.fuzzyThresholdPercent).toBe(90);
+    expect(named.joinGroups).toBeUndefined();
+    expect(named.sourceDisplayColumns?.map((column) => column.column)).toEqual(["district"]);
+
+    const byId = buildMergedRequest(
+      true,
+      extract({ displayCols: ["full_name"], joinKeySource: "m_id", joinKeyTarget: "m_id" }),
+      report({ joinFuzzyThresholdPercent: 90 }),
+    )!;
+    expect(byId.sourceCriteria[0]?.column).toBe("m_id");
+    expect(byId.sourceCriteria[0]?.fuzzyThresholdPercent).toBeNull();
+    expect(byId.joinGroups).toBeUndefined();
+    expect(byId.sourceDisplayColumns?.map((column) => column.column)).toContain("full_name");
+    expect(joinColumnsUseFuzzy("full_name", "m_id")).toBe(true);
+    expect(joinColumnsUseFuzzy("m_id", "m_id")).toBe(false);
+  });
+
+  it("sends ignore-spaces on the join group and fuzzes an additional name column only", () => {
+    const village = { catalog: "iceberg", schema: "srse", table: "village" };
+    const req = buildMergedRequest(
+      true,
+      extract({
+        joinKeySource: "full_name",
+        joinKeyTarget: "full_name",
+        additionalTables: [
+          {
+            id: "extra-name",
+            ref: village,
+            sourceColumn: "father_name",
+            joinColumn: "village_name",
+            displayCols: ["m_id"],
+            joinType: "INNER",
+            ruleRows: [],
+          },
+          {
+            id: "extra-id",
+            ref: { ...village, table: "code" },
+            sourceColumn: "m_id",
+            joinColumn: "m_id",
+            displayCols: ["full_name"],
+            joinType: "INNER",
+            ruleRows: [],
+          },
+        ],
+      }),
+      report({ joinFuzzyIgnoreSpaces: true, joinFuzzyThresholdPercent: 75 }),
+    )!;
+    expect(req.joinGroups?.[0]?.fuzzyOptions).toEqual({ ignoreSpaces: true, caseSensitive: false });
+    expect(req.joinGroups?.[0]?.fuzzyThresholdPercent).toBe(75);
+    expect(req.additionalJoins?.[0]?.fuzzyThresholdPercent).toBe(75);
+    expect(req.additionalJoins?.[0]?.fuzzyOptions).toEqual({ ignoreSpaces: true, caseSensitive: false });
+    expect(req.additionalJoins?.[0]?.displayColumns).toEqual(["m_id"]);
+    expect(req.additionalJoins?.[1]).not.toHaveProperty("fuzzyThresholdPercent");
+    expect(req.additionalJoins?.[1]?.displayColumns).toEqual(["full_name"]);
   });
 });

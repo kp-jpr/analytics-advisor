@@ -146,6 +146,15 @@ export const I18N = {
     qbFuzzyIgnoreSpaces: "Ignore spaces",
     qbFuzzyCaseSensitive: "Case sensitive",
     qbJoinType: "Join type",
+    qbJoinFuzzyPercent: "Fuzzy %",
+    qbJoinFuzzyHint:
+      "This percentage applies to these join columns because one of them contains “name”. Other join columns match exactly.",
+    qbJoinOnlyMatching: "Only matching records",
+    qbJoinAllSource: "All source records",
+    qbJoinAllTarget: "All target records",
+    qbJoinAllBoth: "All records from both",
+    msgAnalyticalEngineDown:
+      "The analytical engine is unavailable. Check the Presto connection, then try again.",
     metadataAsOf: "Metadata as of {date}",
     metadataStatusLive: "live introspection",
     metadataDegradedBadge: "Sync degraded",
@@ -171,6 +180,8 @@ export const I18N = {
     qbSaveAs: "Save as…",
     qbSaveQuery: "Save query",
     qbOpenSaved: "Open saved query…",
+    msgQuerySaved: "Query has been saved successfully.",
+    msgQuerySaveIncomplete: "Choose the tables and columns before saving.",
     qbAdditionalTables: "Additional tables",
     qbAdditionalTablesDesc:
       "Join more tables into this same query. Each one matches the source on an exact column. Up to {max} additional tables. Grouping stays off while extra tables are attached.",
@@ -341,6 +352,15 @@ export const I18N = {
     qbFuzzyIgnoreSpaces: "रिक्त स्थान अनदेखा करें",
     qbFuzzyCaseSensitive: "केस संवेदी",
     qbJoinType: "जॉइन प्रकार",
+    qbJoinFuzzyPercent: "फ़ज़ी %",
+    qbJoinFuzzyHint:
+      "यह प्रतिशत इन जॉइन कॉलम पर लागू होता है क्योंकि उनमें से एक के नाम में “name” है। अन्य जॉइन कॉलम ठीक मेल खाते हैं।",
+    qbJoinOnlyMatching: "केवल मेल खाते रिकॉर्ड",
+    qbJoinAllSource: "स्रोत के सभी रिकॉर्ड",
+    qbJoinAllTarget: "लक्ष्य के सभी रिकॉर्ड",
+    qbJoinAllBoth: "दोनों तालिकाओं के सभी रिकॉर्ड",
+    msgAnalyticalEngineDown:
+      "विश्लेषण इंजन उपलब्ध नहीं है। Presto कनेक्शन जाँचकर फिर कोशिश करें।",
     metadataAsOf: "मेटाडेटा {date} तक",
     metadataStatusLive: "लाइव इंट्रोस्पेक्शन",
     metadataDegradedBadge: "सिंक खराब",
@@ -366,6 +386,8 @@ export const I18N = {
     qbSaveAs: "इस नाम से सहेजें…",
     qbSaveQuery: "क्वेरी सहेजें",
     qbOpenSaved: "सहेजी गई क्वेरी खोलें…",
+    msgQuerySaved: "क्वेरी सफलतापूर्वक सहेज ली गई है।",
+    msgQuerySaveIncomplete: "सहेजने से पहले तालिका और कॉलम चुनें।",
     qbAdditionalTables: "अतिरिक्त तालिकाएँ",
     qbAdditionalTablesDesc:
       "इसी क्वेरी में और तालिकाएँ जोड़ें। हर तालिका स्रोत से एक सटीक कॉलम पर जुड़ती है। अधिकतम {max} अतिरिक्त तालिकाएँ। अतिरिक्त तालिकाओं के साथ समूहीकरण बंद रहता है।",

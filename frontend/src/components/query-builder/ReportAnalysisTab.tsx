@@ -1,5 +1,7 @@
 "use client";
 
+import { shouldStopMatchStream } from "@/lib/matchStreamLimit";
+import { presentQueryError } from "@/lib/queryErrorText";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useShell } from "@/components/shell/ShellProviders";
@@ -73,6 +75,7 @@ import {
   dualModeFromRequest,
   hydrateReportStateFromSavedRequest,
 } from "@/lib/savedQueryHydrate";
+import { queueSavedQueryInfo } from "@/components/query-builder/QueryBuilderSavedQueryOpen";
 import { useQueryBuilderPipeline } from "@/lib/queryBuilderPipelineStore";
 import type { ReportConfig } from "@/lib/queryBuilderPipelineTypes";
 import {
@@ -98,11 +101,15 @@ const fieldLabelStyle = { display: "block", marginBottom: "0.3rem", fontSize: "0
  * Admin page passes live-browse fetchers to this same component; see
  * LakehouseCascade's javadoc.)
  */
-const JOIN_TYPE_OPTIONS: { value: JoinType; label: string; hint: string }[] = [
-  { value: "INNER", label: "Only matching records", hint: "INNER" },
-  { value: "LEFT", label: "All source records", hint: "LEFT" },
-  { value: "RIGHT", label: "All target records", hint: "RIGHT" },
-  { value: "FULL", label: "All records from both", hint: "FULL" },
+const JOIN_TYPE_OPTIONS: {
+  value: JoinType;
+  labelKey: "qbJoinOnlyMatching" | "qbJoinAllSource" | "qbJoinAllTarget" | "qbJoinAllBoth";
+  hint: string;
+}[] = [
+  { value: "INNER", labelKey: "qbJoinOnlyMatching", hint: "INNER" },
+  { value: "LEFT", labelKey: "qbJoinAllSource", hint: "LEFT" },
+  { value: "RIGHT", labelKey: "qbJoinAllTarget", hint: "RIGHT" },
+  { value: "FULL", labelKey: "qbJoinAllBoth", hint: "FULL" },
 ];
 
 const REGISTRY_FETCHERS: CascadeFetchers = {
@@ -230,15 +237,6 @@ function embeddedPipelineDedupColumn(extract: {
  * the screen happens to be holding, so it is the COMPLETE result.
  */
 const MAX_DISPLAYED_ROWS = 10000;
-
-/**
- * Reading stops here even though rows are no longer being kept: the count
- * shown to the officer comes from having read the stream, and a match with
- * crores of rows would otherwise stream for as long as the timeout allows.
- * Past this the count is reported as a lower bound ("200000+"); the CSV
- * download is still complete, since the backend re-runs the query uncapped.
- */
-const MAX_ROWS_TO_PARSE = 200000;
 
 type CountOnlyResult =
   | { kind: "single"; rows: number }
@@ -725,7 +723,11 @@ export default function ReportAnalysisTab({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [savedQueries, setSavedQueries] = useState<SavedQuerySummary[]>([]);
   const [saveQueryName, setSaveQueryName] = useState("");
-  const [savedQueryMessage, setSavedQueryMessage] = useState<string | null>(null);
+  const [openSavedId, setOpenSavedId] = useState("");
+  const [savedQueryNotice, setSavedQueryNotice] = useState<{
+    tone: "saved" | "info" | "error";
+    text: string;
+  } | null>(null);
   const [columnMetadata, setColumnMetadata] = useState<Map<string, ColumnMetadata>>(new Map());
 
   const [highlightDuplicates, setHighlightDuplicates] = useState(false);
@@ -1104,9 +1106,9 @@ export default function ReportAnalysisTab({
       const dual = dualModeFromRequest(detail.request);
       useQueryBuilderPipeline.getState().loadFromMergedRequest(dual, detail.request);
       embeddedHydratedRef.current = false;
-      setSavedQueryMessage(
-        `Loaded “${detail.name}”. Review Extract, then run the query to refresh results.`,
-      );
+      const loaded = `Loaded “${detail.name}”. Review Extract, then run the query to refresh results.`;
+      queueSavedQueryInfo(loaded);
+      setSavedQueryNotice({ tone: "info", text: loaded });
       onSavedQueryLoaded?.();
       return;
     }
@@ -1142,9 +1144,10 @@ export default function ReportAnalysisTab({
     setDedupEnabled(hydrated.dedupEnabled);
     setMismatchOnly(hydrated.mismatchOnly);
     lastRunRequestRef.current = detail.request;
-    setSavedQueryMessage(
-      `Loaded “${detail.name}”. Run match to execute under your scope (values from save are in the request payload).`,
-    );
+    setSavedQueryNotice({
+      tone: "info",
+      text: `Loaded “${detail.name}”. Run match to execute under your scope (values from save are in the request payload).`,
+    });
   }
 
   async function applyKeySuggestion(s: JoinKeySuggestion) {
@@ -1476,10 +1479,8 @@ export default function ReportAnalysisTab({
     if (rowsSeenRef.current <= MAX_DISPLAYED_ROWS) {
       pendingRowsRef.current.push(row);
       carriedRowsRef.current.push(row);
-    } else if (rowsSeenRef.current === MAX_DISPLAYED_ROWS + 1) {
+    } else if (shouldStopMatchStream(rowsSeenRef.current)) {
       setMatchTooManyToDisplay(true);
-    }
-    if (rowsSeenRef.current >= MAX_ROWS_TO_PARSE) {
       setMatchCountIsPartial(true);
       controller.abort();
     }
@@ -1498,7 +1499,10 @@ export default function ReportAnalysisTab({
       setMatchTotalRows(rowsSeenRef.current);
       setMatchStatus("ok");
     } else {
-      setMatchError(err instanceof Error ? err.message : String(err));
+      setMatchError(presentQueryError(
+        err instanceof Error ? err.message : String(err),
+        t("msgAnalyticalEngineDown"),
+      ));
       setMatchStatus("error");
     }
   }
@@ -1641,7 +1645,7 @@ export default function ReportAnalysisTab({
               setMatchStatus("ok");
             },
             onError: (message) => {
-              setMatchError(message);
+              setMatchError(presentQueryError(message, t("msgAnalyticalEngineDown")));
               setMatchStatus("error");
             },
           },
@@ -1716,12 +1720,15 @@ export default function ReportAnalysisTab({
               fetchComparisonSummary(req)
                 .then(setComparisonSummary)
                 .catch((err: unknown) =>
-                  setComparisonSummaryError(err instanceof Error ? err.message : String(err)),
+                  setComparisonSummaryError(presentQueryError(
+                    err instanceof Error ? err.message : String(err),
+                    t("msgAnalyticalEngineDown"),
+                  )),
                 );
             }
           },
           onError: (message) => {
-            setMatchError(message);
+            setMatchError(presentQueryError(message, t("msgAnalyticalEngineDown")));
             setMatchStatus("error");
           },
         },
@@ -1892,7 +1899,7 @@ export default function ReportAnalysisTab({
               >
                 {JOIN_TYPE_OPTIONS.map((opt) => (
                   <option key={opt.value} value={opt.value}>
-                    {opt.label} ({opt.hint})
+                    {t(opt.labelKey)} ({opt.hint})
                   </option>
                 ))}
               </select>
@@ -2027,7 +2034,8 @@ export default function ReportAnalysisTab({
           <input
             type="text"
             className="srse-input"
-            placeholder="Save as…"
+            placeholder={t("qbSaveAs")}
+            aria-label={t("qbSaveAs")}
             value={saveQueryName}
             onChange={(e) => setSaveQueryName(e.target.value)}
             style={{ minWidth: "12rem" }}
@@ -2049,41 +2057,49 @@ export default function ReportAnalysisTab({
                 req = preserveExtractDisplayColumnsOnSave(extract, req);
               }
               if (!req) {
-                setSavedQueryMessage(
-                  embedded
-                    ? "Complete the Extract step before saving."
-                    : "Complete source/target criteria before saving.",
-                );
+                setSavedQueryNotice({ tone: "error", text: t("msgQuerySaveIncomplete") });
                 return;
               }
               try {
                 await createSavedQuery({ name: saveQueryName.trim(), request: req });
                 setSaveQueryName("");
-                setSavedQueryMessage("Saved.");
-                setSavedQueries(await listSavedQueries());
+                setSavedQueryNotice({ tone: "saved", text: t("msgQuerySaved") });
+                try {
+                  setSavedQueries(await listSavedQueries());
+                } catch {
+                  // The query is already stored. A failed list refresh must not replace the success message.
+                }
               } catch (err: unknown) {
-                setSavedQueryMessage(err instanceof Error ? err.message : String(err));
+                const raw = err instanceof Error ? err.message : String(err);
+                setSavedQueryNotice({
+                  tone: "error",
+                  text: presentQueryError(raw, t("msgAnalyticalEngineDown")),
+                });
               }
             }}
           >
-            Save query
+            {t("qbSaveQuery")}
           </button>
           <select
             className="srse-input"
             aria-label="Open saved query"
-            defaultValue=""
+            value={openSavedId}
             onChange={async (e) => {
               const id = Number(e.target.value);
+              setOpenSavedId("");
               if (!id) return;
               try {
                 await openSavedQuery(id);
               } catch (err: unknown) {
-                setSavedQueryMessage(err instanceof Error ? err.message : String(err));
+                const raw = err instanceof Error ? err.message : String(err);
+                setSavedQueryNotice({
+                  tone: "error",
+                  text: presentQueryError(raw, t("msgAnalyticalEngineDown")),
+                });
               }
-              e.target.value = "";
             }}
           >
-            <option value="">Open saved query…</option>
+            <option value="">{t("qbOpenSaved")}</option>
             {savedQueries.map((q) => (
               <option key={q.id} value={q.id}>
                 {q.name}
@@ -2092,9 +2108,19 @@ export default function ReportAnalysisTab({
             ))}
           </select>
         </div>
-        {savedQueryMessage && (
-          <p className="srse-text-muted" style={{ marginBottom: 0, fontSize: "0.85rem" }}>
-            {savedQueryMessage}
+        {savedQueryNotice?.tone === "saved" && (
+          <p className="srse-save-banner" role="status">
+            {savedQueryNotice.text}
+          </p>
+        )}
+        {savedQueryNotice?.tone === "info" && (
+          <p className="srse-text-muted" role="status" style={{ marginBottom: 0, fontSize: "0.85rem" }}>
+            {savedQueryNotice.text}
+          </p>
+        )}
+        {savedQueryNotice?.tone === "error" && (
+          <p className="srse-text-danger" role="alert" style={{ marginBottom: 0 }}>
+            {savedQueryNotice.text}
           </p>
         )}
       </section>
@@ -2468,7 +2494,7 @@ export default function ReportAnalysisTab({
                 >
                   {JOIN_TYPE_OPTIONS.map((opt) => (
                     <option key={opt.value} value={opt.value} title={opt.hint}>
-                      {opt.label}
+                      {t(opt.labelKey)}
                     </option>
                   ))}
                 </select>
@@ -2734,7 +2760,7 @@ export default function ReportAnalysisTab({
             >
               {JOIN_TYPE_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>
-                  {opt.label} ({opt.hint})
+                  {t(opt.labelKey)} ({opt.hint})
                 </option>
               ))}
             </select>

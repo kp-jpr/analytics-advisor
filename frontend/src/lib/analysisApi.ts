@@ -194,6 +194,9 @@ export type AdditionalJoin = {
   joinType?: JoinType;
   /** Basic rules applied inside this table before the join. */
   rules?: PredicateSpecWire | null;
+  /** Set only when a join column contains "name". Null keeps an equality join. */
+  fuzzyThresholdPercent?: number | null;
+  fuzzyOptions?: FuzzyOptionsWire | null;
 };
 
 export type HubSide = "SOURCE" | "TARGET";
@@ -399,6 +402,7 @@ export function listOverviewColumns(ref: TableRef): Promise<RegisteredColumn[]> 
   );
 }
 
+/** One column list per table for the life of the page. A failed load is not kept. */
 const analysisColumnCache = new Map<string, Promise<RegisteredColumn[]>>();
 
 export function listAnalysisColumns(ref: TableRef): Promise<RegisteredColumn[]> {

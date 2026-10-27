@@ -2,6 +2,7 @@ package gov.rajasthan.smart.srse.analysis;
 
 import gov.rajasthan.smart.srse.compiler.Ast;
 import gov.rajasthan.smart.srse.compiler.CompareAs;
+import gov.rajasthan.smart.srse.compiler.FuzzyOptions;
 import gov.rajasthan.smart.srse.execution.GuardrailProperties;
 import gov.rajasthan.smart.srse.lakehouse.AnalysisScopeFromService;
 import gov.rajasthan.smart.srse.lakehouse.LakehouseRegistryService;
@@ -1239,6 +1240,74 @@ class RecordMatchServiceTest {
     }
 
     @Test
+    void additionalNameJoinUsesFuzzyAndAnIdJoinStaysEqual() {
+        AdditionalJoin names = new AdditionalJoin(
+                CATALOG, SCHEMA, "village", "father_name", "village_name",
+                List.of("m_id"), null, null, 80.0, null);
+        RecordMatchRequest named = new RecordMatchRequest(
+                List.of(exact("beneficiary", "district")),
+                List.of(exact("bank", "district")),
+                null, null, List.of(), false, null, null, List.of(), false,
+                null, null, false, List.of(), List.of(), null, false,
+                List.of(names));
+        String sql = service.planMatch(named).sql();
+        int whereIdx = sql.indexOf(" WHERE ");
+        String beforeWhere = sql.substring(0, whereIdx);
+        String where = sql.substring(whereIdx);
+        assertTrue(beforeWhere.contains(
+                "substr(lower(src.father_name), 1, 3) = substr(lower(x1.village_name), 1, 3)"), sql);
+        assertTrue(where.contains("levenshtein_distance(lower(src.father_name), lower(x1.village_name))"), sql);
+        assertTrue(sql.contains("x1.m_id AS \"extra1_m_id\""), sql);
+        assertTrue(sql.contains("src.district = tgt.district"), sql);
+
+        AdditionalJoin ids = new AdditionalJoin(
+                CATALOG, SCHEMA, "village", "m_id", "m_id",
+                List.of("full_name"), null, null, 80.0, null);
+        String idSql = service.planMatch(new RecordMatchRequest(
+                List.of(exact("beneficiary", "district")),
+                List.of(exact("bank", "district")),
+                null, null, List.of(), false, null, null, List.of(), false,
+                null, null, false, List.of(), List.of(), null, false,
+                List.of(ids))).sql();
+        assertTrue(idSql.contains("src.m_id = x1.m_id"), idSql);
+        assertFalse(idSql.contains("levenshtein_distance"), idSql);
+        assertTrue(idSql.contains("x1.full_name AS \"extra1_full_name\""), idSql);
+    }
+
+    @Test
+    void additionalNameJoinWithoutAThresholdStaysEqual() {
+        AdditionalJoin names = new AdditionalJoin(
+                CATALOG, SCHEMA, "village", "father_name", "village_name", List.of());
+        String sql = service.planMatch(new RecordMatchRequest(
+                List.of(exact("beneficiary", "district")),
+                List.of(exact("bank", "district")),
+                null, null, List.of(), false, null, null, List.of(), false,
+                null, null, false, List.of(), List.of(), null, false,
+                List.of(names))).sql();
+        assertTrue(sql.contains("src.father_name = x1.village_name"), sql);
+        assertFalse(sql.contains("levenshtein_distance"), sql);
+    }
+
+    @Test
+    void leftAdditionalNameJoinKeepsSimilarityOnTheJoin() {
+        AdditionalJoin names = new AdditionalJoin(
+                CATALOG, SCHEMA, "village", "father_name", "village_name",
+                List.of(), JoinType.LEFT, null, 70.0, new FuzzyOptions(false, true));
+        String sql = service.planMatch(new RecordMatchRequest(
+                List.of(exact("beneficiary", "district")),
+                List.of(exact("bank", "district")),
+                null, null, List.of(), false, null, null, List.of(), false,
+                null, null, false, List.of(), List.of(), null, false,
+                List.of(names))).sql();
+        int whereIdx = sql.indexOf(" WHERE ");
+        String beforeWhere = sql.substring(0, whereIdx);
+        assertTrue(beforeWhere.contains("LEFT JOIN"), sql);
+        assertTrue(beforeWhere.contains("replace(lower(src.father_name), ' ', '')"), sql);
+        assertTrue(beforeWhere.contains("levenshtein_distance"), sql);
+        assertFalse(sql.substring(whereIdx).contains("levenshtein_distance"), sql);
+    }
+
+    @Test
     void leftAdditionalJoinKeepsItsRuleInsideTheTable() {
         lenient().when(ruleCompiler.compile(any(), any(), any()))
                 .thenReturn(new gov.rajasthan.smart.srse.compiler.CompiledQuery(
@@ -1357,6 +1426,20 @@ class RecordMatchServiceTest {
                 List.of(village))));
         verify(jdbc, never()).queryForObject(contains("approx_distinct"), eq(Long.class));
         verify(jdbc, never()).queryForObject(contains("count(*)"), eq(Long.class));
+        RecordMatchService.PlanTrace trace = service.takePlanTrace();
+        assertEquals("catalog-stats", trace.estimateSource());
+        assertFalse(trace.liveCount);
+        assertEquals(3, trace.tables);
+        assertEquals("INNER+INNER", trace.joins);
+    }
+
+    @Test
+    void planTimingMessageIsASingleLine() {
+        String line = RecordMatchService.planTimingMessage(4, 12, 3, "INNER+LEFT", "catalog-stats");
+        assertEquals(
+                "Match planMs=4 executeMs=12 tables=3 joins=INNER+LEFT estimate=catalog-stats",
+                line);
+        assertFalse(line.contains("\n"));
     }
 
     @Test

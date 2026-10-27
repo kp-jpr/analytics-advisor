@@ -3,7 +3,9 @@ import type {
   AdditionalJoin,
   ComparisonGroup,
   DisplayColumn,
+  FuzzyOptionsWire,
   MatchCriterion,
+  MatchGroup,
   PredicateNodeWire,
   PredicateSpecWire,
   RecordMatchRequest,
@@ -111,6 +113,70 @@ function isNameColumn(column: string): boolean {
 function pairIsFuzzy(sourceCol: string, targetCol: string, threshold: number): boolean {
   if (threshold > 0 && (isNameColumn(sourceCol) || isNameColumn(targetCol))) return true;
   return false;
+}
+
+/** True when either join-dropdown column is name-like, which is when Fuzzy % is shown. */
+export function joinColumnsUseFuzzy(sourceColumn: string, targetColumn: string): boolean {
+  return isNameColumn(sourceColumn) || isNameColumn(targetColumn);
+}
+
+function joinFuzzyOptions(report: ReportConfig): FuzzyOptionsWire | undefined {
+  if (!report.joinFuzzyIgnoreSpaces && !report.joinFuzzyCaseSensitive) return undefined;
+  return {
+    ignoreSpaces: report.joinFuzzyIgnoreSpaces,
+    caseSensitive: report.joinFuzzyCaseSensitive,
+  };
+}
+
+/**
+ * Attaches the join-step fuzzy threshold to the columns chosen in the join
+ * dropdowns. A display column named like a name does not make the join fuzzy.
+ * Default options stay off the payload so the equality and default-fuzzy SQL
+ * stay on the criterion path.
+ */
+export function applyJoinColumnFuzzy(req: RecordMatchRequest, report: ReportConfig): RecordMatchRequest {
+  const next: RecordMatchRequest = { ...req };
+  const src = next.sourceCriteria?.[0];
+  const tgt = next.targetCriteria?.[0];
+  if (!next.singleSource && src && tgt) {
+    const fuzzy = pairIsFuzzy(src.column, tgt.column, report.joinFuzzyThresholdPercent);
+    const sourceCriteria: MatchCriterion[] = [
+      { ...src, fuzzyThresholdPercent: fuzzy ? report.joinFuzzyThresholdPercent : null },
+    ];
+    next.sourceCriteria = sourceCriteria;
+    const options = fuzzy ? joinFuzzyOptions(report) : undefined;
+    if (options) {
+      const group: MatchGroup = {
+        source: sourceCriteria,
+        target: next.targetCriteria ?? [],
+        mode: "COMBINE",
+        fuzzyThresholdPercent: report.joinFuzzyThresholdPercent,
+        fuzzyOptions: options,
+        separator: null,
+      };
+      next.joinGroups = [group];
+    } else {
+      delete next.joinGroups;
+    }
+  }
+  if (next.additionalJoins && next.additionalJoins.length > 0) {
+    const options = joinFuzzyOptions(report);
+    next.additionalJoins = next.additionalJoins.map((join) => {
+      const rest: AdditionalJoin = { ...join };
+      delete rest.fuzzyThresholdPercent;
+      delete rest.fuzzyOptions;
+      if (!pairIsFuzzy(join.sourceColumn, join.joinColumn, report.joinFuzzyThresholdPercent)) {
+        return rest;
+      }
+      const fuzzyJoin: AdditionalJoin = {
+        ...rest,
+        fuzzyThresholdPercent: report.joinFuzzyThresholdPercent,
+      };
+      if (options) fuzzyJoin.fuzzyOptions = options;
+      return fuzzyJoin;
+    });
+  }
+  return next;
 }
 
 export function toggleDisplayColumnSelection(selected: readonly string[], name: string): string[] {
@@ -370,18 +436,6 @@ export function buildMergedRequest(
     delete req.joinType;
   }
 
-  if (dualMode && req.sourceCriteria?.[0] && req.targetCriteria?.[0]) {
-    const srcCol = req.sourceCriteria[0].column;
-    const tgtCol = req.targetCriteria[0].column;
-    const fuzzy = pairIsFuzzy(srcCol, tgtCol, report.joinFuzzyThresholdPercent);
-    req.sourceCriteria = [
-      {
-        ...req.sourceCriteria[0],
-        fuzzyThresholdPercent: fuzzy ? report.joinFuzzyThresholdPercent : null,
-      },
-    ];
-  }
-
   if (report.mismatchOnly && req.comparisonGroups && req.comparisonGroups.length > 0) {
     req.mismatchOnly = true;
   } else {
@@ -436,7 +490,7 @@ export function buildMergedRequest(
     delete req.countOnly;
   }
 
-  return req;
+  return applyJoinColumnFuzzy(req, report);
 }
 
 /** Full-result export — never carries count-only or the on-screen row cap. */

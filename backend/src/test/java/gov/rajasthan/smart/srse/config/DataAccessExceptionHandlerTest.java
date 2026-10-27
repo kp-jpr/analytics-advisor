@@ -37,8 +37,8 @@ class DataAccessExceptionHandlerTest {
                 new UncategorizedSQLException("StatementCallback", "SELECT COUNT(*) FROM beneficiary", sql));
 
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE, res.getStatusCode());
-        assertTrue(res.getBody().message().contains("Lakehouse connection unavailable"), res.getBody().message());
-        assertTrue(res.getBody().message().contains("Socket closed"), res.getBody().message());
+        assertTrue(res.getBody().message().contains("analytical engine is unavailable"), res.getBody().message());
+        assertFalse(res.getBody().message().contains("Socket closed"), res.getBody().message());
     }
 
     @Test
@@ -47,7 +47,8 @@ class DataAccessExceptionHandlerTest {
                 new DataAccessResourceFailureException("pool down", new ConnectException("Connection refused")));
 
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE, res.getStatusCode());
-        assertTrue(res.getBody().message().contains("Connection refused"), res.getBody().message());
+        assertTrue(res.getBody().message().contains("analytical engine is unavailable"), res.getBody().message());
+        assertFalse(res.getBody().message().contains("Connection refused"), res.getBody().message());
     }
 
     /**
@@ -63,7 +64,7 @@ class DataAccessExceptionHandlerTest {
 
         assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, res.getStatusCode());
         assertTrue(res.getBody().message().contains("cannot be resolved"), res.getBody().message());
-        assertFalse(res.getBody().message().contains("Lakehouse connection unavailable"), res.getBody().message());
+        assertFalse(res.getBody().message().contains("analytical engine is unavailable"), res.getBody().message());
     }
 
     /** A null message must not surface as the string "null". */
@@ -73,7 +74,10 @@ class DataAccessExceptionHandlerTest {
                 new DataAccessResourceFailureException(null, new SocketException()));
 
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE, res.getStatusCode());
-        assertTrue(res.getBody().message().contains("SocketException"), res.getBody().message());
+        assertEquals(
+                "The analytical engine is unavailable. Check the Presto connection, then try again.",
+                res.getBody().message());
+        assertFalse(res.getBody().message().contains("null"));
     }
 
     /**

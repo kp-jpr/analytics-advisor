@@ -318,6 +318,16 @@ a {
   font-size: 0.85rem;
 }
 
+.srse-save-banner {
+  margin: 0.75rem 0 0;
+  padding: 0.6rem 0.8rem;
+  border-radius: var(--srse-radius-sm);
+  background: var(--srse-success-bg);
+  color: var(--srse-success);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
 .srse-text-muted {
   color: var(--srse-text-muted);
   font-size: 0.85rem;

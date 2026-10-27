@@ -25,9 +25,7 @@ public final class QueryFailureMessages {
 
     public static String officerMessage(Throwable ex) {
         if (isConnectivityFailure(ex)) {
-            return "Lakehouse connection unavailable — the query could not be sent. "
-                    + "Check the analytical (Presto) connection on the Admin page, then retry. "
-                    + "Underlying error: " + rootMessage(ex);
+            return "The analytical engine is unavailable. Check the Presto connection, then try again.";
         }
         if (ex instanceof DataAccessException dataAccess) {
             return "Query failed: " + rootMessage(ex) + failingSql(dataAccess);
