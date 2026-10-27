@@ -3079,6 +3079,7 @@ export default function ReportAnalysisTab({
                 : undefined
             }
             columnLabels={buildColumnLabels()}
+            showCharts={false}
             chartRequest={multiMatchMode ? null : chartRequest}
             onFullRowCount={multiMatchMode ? undefined : onFullRowCount}
             onDedupToggle={(enabled) => {

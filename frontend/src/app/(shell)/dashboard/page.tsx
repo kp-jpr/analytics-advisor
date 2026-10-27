@@ -5,6 +5,7 @@ import Link from "next/link";
 import { AnalysisResultsGrid } from "@/components/AnalysisResultsGrid";
 import { useShell } from "@/components/shell/ShellProviders";
 import { downloadRecordMatchExport, type MatchExportFormat } from "@/lib/analysisApi";
+import { attributeNullCounts } from "@/lib/attributeNullCounts";
 import { bufferedExportAllowed, resultPreviewIsTruncated } from "@/lib/fullResultExport";
 import { useQueryResultsStore } from "@/lib/queryResultsStore";
 import { defaultExportFilename, exportBufferedAnalyticalResult, triggerBlobDownload } from "@/lib/resultTableExport";
@@ -28,7 +29,19 @@ export default function DashboardPage() {
     );
   }, [lastResult]);
 
-  const labelFor = useCallback((id: string) => lastResult?.columnLabels?.[id] ?? id, [lastResult?.columnLabels]);
+  const labelFor = useCallback((id: string) => {
+    const stored = lastResult?.columnLabels?.[id];
+    if (stored) return stored;
+    return id
+      .replace(/^source_/, "Source: ")
+      .replace(/^target_/, "Target: ")
+      .replaceAll("_", " ");
+  }, [lastResult?.columnLabels]);
+
+  const nullByAttribute = useMemo(() => {
+    if (!lastResult?.rows.length) return [];
+    return attributeNullCounts(lastResult.columns, lastResult.rows);
+  }, [lastResult]);
 
   const onFullRowCount = useCallback((totalRows: number) => {
     applyFullRowCount(totalRows);
@@ -97,7 +110,26 @@ export default function DashboardPage() {
               <div className="num">{numericCols.length}</div>
               <div className="lbl">{t("statNumericCols")}</div>
             </div>
+            {nullByAttribute.map((item) => {
+              const share = lastResult.rows.length === 0
+                ? 0
+                : Math.round((item.nulls * 1000) / lastResult.rows.length) / 10;
+              return (
+                <div className="stat" key={item.column}>
+                  <div className="num">{item.nulls.toLocaleString()}</div>
+                  <div className="lbl">{t("statAttrNull")}</div>
+                  <div className="lbl" style={{ textTransform: "none" }}>
+                    {labelFor(item.column)} · {share}%
+                  </div>
+                </div>
+              );
+            })}
           </div>
+          {truncated || countIsPartial ? (
+            <p className="srse-query-notice" role="status" style={{ marginTop: 0 }}>
+              {t("dashNullShownNote")}
+            </p>
+          ) : null}
 
           {!lastResult.matchExportRequest && (truncated || countIsPartial) ? (
             <p className="srse-query-notice" role="status">
@@ -119,6 +151,7 @@ export default function DashboardPage() {
             dedupEnabled={false}
             onDedupToggle={() => {}}
             showCharts
+            chartPlacement="above"
             chartRequest={lastResult.matchExportRequest ?? null}
             columnLabels={lastResult.columnLabels}
             onFullRowCount={onFullRowCount}

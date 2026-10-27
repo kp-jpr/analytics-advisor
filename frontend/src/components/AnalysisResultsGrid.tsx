@@ -104,8 +104,10 @@ export type AnalysisResultsGridProps = Readonly<{
   columnLabels?: Record<string, string>;
   fullCsvDownloadNote?: string;
   appearance?: "legacy" | "prototype";
-  /** Hide charts section (e.g. dashboard already charts above). */
+  /** Hide charts section. Query Builder passes false; the dashboard keeps charts. */
   showCharts?: boolean;
+  /** Dashboard draws the chart above the table. Other callers keep it below. */
+  chartPlacement?: "above" | "below";
   /** When set, charts count the full match instead of the rows on screen. */
   chartRequest?: RecordMatchRequest | null;
   /** Exact match size from chart grouping. */
@@ -208,6 +210,7 @@ export function AnalysisResultsGrid({
   fullCsvDownloadNote,
   appearance = "legacy",
   showCharts = true,
+  chartPlacement = "below",
   chartRequest = null,
   onFullRowCount,
   serverExportAvailable = Boolean(onDownloadFullExport || onDownloadFullCsv),
@@ -386,6 +389,19 @@ export function AnalysisResultsGrid({
     </h4>
   );
 
+  const chartBlock = showCharts && rows.length > 0 && (chartRequest || !tooManyToDisplay) ? (
+    <div style={{ marginTop: chartPlacement === "above" ? 0 : "1.5rem", marginBottom: chartPlacement === "above" ? "1.5rem" : 0 }}>
+      <ChartsSection
+        rows={rows}
+        dimensions={columns.map((c) => ({ key: c, label: labelFor(c) }))}
+        getValue={(row, key) => String(row[key] ?? "")}
+        getCount={() => 1}
+        loadBuckets={loadChartBuckets}
+        onFullRowCount={onFullRowCount}
+      />
+    </div>
+  ) : null;
+
   const titleSection = proto ? rowCountLabel : (
     <>
       {rowCountLabel}
@@ -403,6 +419,7 @@ export function AnalysisResultsGrid({
 
   return (
     <>
+      {chartPlacement === "above" ? chartBlock : null}
       <section className={proto ? "section result-table-section" : "srse-card result-table-section"} style={{ width: "100%" }}>
         {tooManyToDisplay && (
           <TooManyRowsPanel
@@ -548,18 +565,7 @@ export function AnalysisResultsGrid({
         </div>
       </section>
 
-      {showCharts && rows.length > 0 && (chartRequest || !tooManyToDisplay) && (
-        <div style={{ marginTop: "1.5rem" }}>
-          <ChartsSection
-            rows={rows}
-            dimensions={columns.map((c) => ({ key: c, label: labelFor(c) }))}
-            getValue={(row, key) => String(row[key] ?? "")}
-            getCount={() => 1}
-            loadBuckets={loadChartBuckets}
-            onFullRowCount={onFullRowCount}
-          />
-        </div>
-      )}
+      {chartPlacement === "below" ? chartBlock : null}
     </>
   );
 }

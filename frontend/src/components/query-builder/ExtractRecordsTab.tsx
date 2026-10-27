@@ -1228,6 +1228,7 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
             displayLimit={MAX_DISPLAYED_ROWS}
             onDownloadFullCsv={() => downloadFullExport("csv")}
             onDownloadFullExport={downloadFullExport}
+            showCharts={false}
             chartRequest={chartRequest}
             onFullRowCount={onFullRowCount}
             highlightDuplicates={false}
