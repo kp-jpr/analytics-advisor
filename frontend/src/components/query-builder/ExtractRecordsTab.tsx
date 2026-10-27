@@ -42,7 +42,9 @@ import { MetadataColumnStatus } from "@/components/query-builder/MetadataColumnS
 import { useQueryBuilderPipeline } from "@/lib/queryBuilderPipelineStore";
 import {
   MAX_ADDITIONAL_TABLES,
+  MAX_JOIN_CONDITIONS,
   type AdditionalTableConfig,
+  type ExtractJoinKey,
   type ExtractRuleRow,
 } from "@/lib/queryBuilderPipelineTypes";
 
@@ -367,6 +369,68 @@ type ExtractRecordsTabProps = {
   onGoReport?: () => void;
 };
 
+function JoinConditionRow({
+  sourceLabel,
+  targetLabel,
+  sourceValue,
+  targetValue,
+  sourceColumns,
+  targetColumns,
+  placeholder,
+  onSource,
+  onTarget,
+  onRemove,
+  removeLabel,
+  conditionNumber,
+}: {
+  sourceLabel: string;
+  targetLabel: string;
+  sourceValue: string;
+  targetValue: string;
+  sourceColumns: { name: string }[];
+  targetColumns: { name: string }[];
+  placeholder: string;
+  onSource: (value: string) => void;
+  onTarget: (value: string) => void;
+  onRemove?: () => void;
+  removeLabel?: string;
+  conditionNumber?: number;
+}) {
+  const sourceAria = conditionNumber ? `${sourceLabel} ${conditionNumber}` : sourceLabel;
+  const targetAria = conditionNumber ? `${targetLabel} ${conditionNumber}` : targetLabel;
+  return (
+    <div className="two-col" style={{ marginTop: conditionNumber ? 12 : 0, alignItems: "end" }}>
+      <div className="field">
+        <label>{sourceAria}</label>
+        <select aria-label={sourceAria} value={sourceValue} onChange={(e) => onSource(e.target.value)}>
+          <option value="">{placeholder}</option>
+          {sourceColumns.map((column) => (
+            <option key={column.name} value={column.name}>
+              {column.name}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="field dest-only">
+        <label>{targetAria}</label>
+        <select aria-label={targetAria} value={targetValue} onChange={(e) => onTarget(e.target.value)}>
+          <option value="">{placeholder}</option>
+          {targetColumns.map((column) => (
+            <option key={column.name} value={column.name}>
+              {column.name}
+            </option>
+          ))}
+        </select>
+        {onRemove && removeLabel ? (
+          <button type="button" className="btn secondary sm" style={{ marginTop: 8 }} onClick={onRemove}>
+            {removeLabel}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 /** Fuzzy % for the columns selected in the join dropdowns. Hidden unless one of those columns is name-like. */
 export function JoinColumnFuzzyFields({
   sourceColumn,
@@ -442,6 +506,7 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
     targetDisplayCols,
     joinKeySource,
     joinKeyTarget,
+    extraJoinKeys,
     joinType,
     additionalTables,
     ruleColumn,
@@ -486,6 +551,14 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
   };
   const setJoinKeySource = (v: string) => patchExtract({ joinKeySource: v });
   const setJoinKeyTarget = (v: string) => patchExtract({ joinKeyTarget: v });
+  const updateExtraJoinKey = (id: string, patch: Partial<ExtractJoinKey>) =>
+    patchExtract({
+      extraJoinKeys: (extraJoinKeys ?? []).map((row) => (row.id === id ? { ...row, ...patch } : row)),
+    });
+  const fuzzyJoinPair = [
+    { sourceColumn: joinKeySource, targetColumn: joinKeyTarget },
+    ...(extraJoinKeys ?? []),
+  ].find((pair) => joinColumnsUseFuzzy(pair.sourceColumn, pair.targetColumn));
   const setJoinType = (v: JoinType) => patchExtract({ joinType: v });
   const commitSourceRuleRows = (next: ExtractRuleRow[]) =>
     patchExtract({ sourceRuleRows: next, ruleColumn: "", ruleValue: "" });
@@ -907,38 +980,54 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
             {modeKey("secPrimaryKeys", "secPrimaryKeysSingle", dual)}
           </h4>
           <p className="desc">{modeKey("secPrimaryKeysDesc", "secPrimaryKeysDescSingle", dual)}</p>
-          <div className="two-col">
-            <div className="field">
-              <label>{t("lblSourcePK")}</label>
-              <select
-                aria-label={t("lblSourcePK")}
-                value={joinKeySource}
-                onChange={(e) => setJoinKeySource(e.target.value)}
-              >
-                <option value="">{t("selPKPlaceholder")}</option>
-                {sourceColumnsDisplay.map((c) => (
-                  <option key={c.name} value={c.name}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="field dest-only">
-              <label>{t("lblDestPK")}</label>
-              <select
-                aria-label={t("lblDestPK")}
-                value={joinKeyTarget}
-                onChange={(e) => setJoinKeyTarget(e.target.value)}
-              >
-                <option value="">{t("selPKPlaceholder")}</option>
-                {targetColumnsDisplay.map((c) => (
-                  <option key={c.name} value={c.name}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
+          <JoinConditionRow
+            sourceLabel={t("lblSourcePK")}
+            targetLabel={t("lblDestPK")}
+            sourceValue={joinKeySource}
+            targetValue={joinKeyTarget}
+            sourceColumns={sourceColumnsDisplay}
+            targetColumns={targetColumnsDisplay}
+            placeholder={t("selPKPlaceholder")}
+            onSource={setJoinKeySource}
+            onTarget={setJoinKeyTarget}
+          />
+          {(extraJoinKeys ?? []).map((key, index) => (
+            <JoinConditionRow
+              key={key.id}
+              sourceLabel={t("lblSourcePK")}
+              targetLabel={t("lblDestPK")}
+              sourceValue={key.sourceColumn}
+              targetValue={key.targetColumn}
+              sourceColumns={sourceColumnsDisplay}
+              targetColumns={targetColumnsDisplay}
+              placeholder={t("selPKPlaceholder")}
+              onSource={(value) => updateExtraJoinKey(key.id, { sourceColumn: value })}
+              onTarget={(value) => updateExtraJoinKey(key.id, { targetColumn: value })}
+              onRemove={() =>
+                patchExtract({
+                  extraJoinKeys: (extraJoinKeys ?? []).filter((row) => row.id !== key.id),
+                })
+              }
+              removeLabel={t("qbRemoveJoinCondition")}
+              conditionNumber={index + 2}
+            />
+          ))}
+          <button
+            type="button"
+            className="btn secondary sm"
+            style={{ marginTop: 12 }}
+            disabled={1 + (extraJoinKeys ?? []).length >= MAX_JOIN_CONDITIONS}
+            onClick={() =>
+              patchExtract({
+                extraJoinKeys: [
+                  ...(extraJoinKeys ?? []),
+                  { id: crypto.randomUUID(), sourceColumn: "", targetColumn: "" },
+                ],
+              })
+            }
+          >
+            {t("qbAddJoinCondition")} ({1 + (extraJoinKeys ?? []).length}/{MAX_JOIN_CONDITIONS})
+          </button>
           <div className="field" style={{ marginTop: 12, maxWidth: 360 }}>
             <label>{t("qbJoinType")}</label>
             <select
@@ -954,8 +1043,8 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
             </select>
           </div>
           <JoinColumnFuzzyFields
-            sourceColumn={joinKeySource}
-            targetColumn={joinKeyTarget}
+            sourceColumn={fuzzyJoinPair?.sourceColumn ?? joinKeySource}
+            targetColumn={fuzzyJoinPair?.targetColumn ?? joinKeyTarget}
             threshold={joinFuzzyThresholdPercent}
             ignoreSpaces={joinFuzzyIgnoreSpaces}
             caseSensitive={joinFuzzyCaseSensitive}

@@ -290,8 +290,25 @@ function sourceLegacyRuleFields(spec: PredicateSpecWire | null | undefined): Leg
   return ruleFieldsFromSpec(spec);
 }
 
+function joinPairsFromRequest(req: RecordMatchRequest): { sourceColumn: string; targetColumn: string }[] {
+  if (req.joinGroups && req.joinGroups.length > 0) {
+    return req.joinGroups
+      .map((group) => ({
+        sourceColumn: group.source[0]?.column ?? "",
+        targetColumn: group.target[0]?.column ?? "",
+      }))
+      .filter((pair) => pair.sourceColumn || pair.targetColumn);
+  }
+  const count = Math.min(req.sourceCriteria.length, req.targetCriteria.length);
+  return Array.from({ length: count }, (_, index) => ({
+    sourceColumn: req.sourceCriteria[index]?.column ?? "",
+    targetColumn: req.targetCriteria[index]?.column ?? "",
+  }));
+}
+
 /** Query Builder Extract tab — physical tables, attributes, keys, rules (no report-stage options). */
 export function hydrateExtractConfigFromRequest(req: RecordMatchRequest): ExtractConfig {
+  const pairs = joinPairsFromRequest(req);
   const srcCrit = req.sourceCriteria[0];
   const tgtCrit = req.targetCriteria[0];
   const displayRef =
@@ -306,8 +323,13 @@ export function hydrateExtractConfigFromRequest(req: RecordMatchRequest): Extrac
     targetRef,
     displayCols: (req.sourceDisplayColumns ?? []).map((d) => d.column),
     targetDisplayCols: (req.targetDisplayColumns ?? []).map((d) => d.column),
-    joinKeySource: srcCrit?.column ?? "",
-    joinKeyTarget: tgtCrit?.column ?? "",
+    joinKeySource: pairs[0]?.sourceColumn ?? srcCrit?.column ?? "",
+    joinKeyTarget: pairs[0]?.targetColumn ?? tgtCrit?.column ?? "",
+    extraJoinKeys: pairs.slice(1).map((pair, index) => ({
+      id: `saved-join-${index + 2}`,
+      sourceColumn: pair.sourceColumn,
+      targetColumn: pair.targetColumn,
+    })),
     joinType: req.joinType ?? "INNER",
     ruleColumn: sourceRules.column,
     ruleOp: sourceRules.operator,

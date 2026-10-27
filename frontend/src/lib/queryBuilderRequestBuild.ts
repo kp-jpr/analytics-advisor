@@ -12,11 +12,12 @@ import type {
   RuleOperator,
   TableRef,
 } from "@/lib/analysisApi";
-import type {
-  AdditionalTableConfig,
-  ExtractConfig,
-  ExtractRuleRow,
-  ReportConfig,
+import {
+  MAX_JOIN_CONDITIONS,
+  type AdditionalTableConfig,
+  type ExtractConfig,
+  type ExtractRuleRow,
+  type ReportConfig,
 } from "@/lib/queryBuilderPipelineTypes";
 
 const RULE_OPS: { value: RuleOperator; needsValue: boolean }[] = [
@@ -106,6 +107,22 @@ function refAsTable(ref: CascadeValue): TableRef | null {
   return isCascadeComplete(ref) ? (ref as TableRef) : null;
 }
 
+/** Filled pairs, or null when a pair has only one side. Empty extra rows are ignored. */
+export function joinPairs(
+  extract: Pick<ExtractConfig, "joinKeySource" | "joinKeyTarget" | "extraJoinKeys">,
+): { sourceColumn: string; targetColumn: string }[] | null {
+  const rows = [
+    { sourceColumn: extract.joinKeySource, targetColumn: extract.joinKeyTarget },
+    ...(extract.extraJoinKeys ?? []).map((key) => ({
+      sourceColumn: key.sourceColumn,
+      targetColumn: key.targetColumn,
+    })),
+  ].filter((pair) => pair.sourceColumn || pair.targetColumn);
+  if (rows.length === 0 || rows.length > MAX_JOIN_CONDITIONS) return null;
+  if (rows.some((pair) => !pair.sourceColumn || !pair.targetColumn)) return null;
+  return rows;
+}
+
 function isNameColumn(column: string): boolean {
   return column.toLowerCase().includes("name");
 }
@@ -136,25 +153,31 @@ function joinFuzzyOptions(report: ReportConfig): FuzzyOptionsWire | undefined {
  */
 export function applyJoinColumnFuzzy(req: RecordMatchRequest, report: ReportConfig): RecordMatchRequest {
   const next: RecordMatchRequest = { ...req };
-  const src = next.sourceCriteria?.[0];
-  const tgt = next.targetCriteria?.[0];
-  if (!next.singleSource && src && tgt) {
-    const fuzzy = pairIsFuzzy(src.column, tgt.column, report.joinFuzzyThresholdPercent);
-    const sourceCriteria: MatchCriterion[] = [
-      { ...src, fuzzyThresholdPercent: fuzzy ? report.joinFuzzyThresholdPercent : null },
-    ];
+  const sources = next.sourceCriteria ?? [];
+  const targets = next.targetCriteria ?? [];
+  if (!next.singleSource && sources.length > 0 && sources.length === targets.length) {
+    const sourceCriteria: MatchCriterion[] = sources.map((src, index) => {
+      const fuzzy = pairIsFuzzy(src.column, targets[index].column, report.joinFuzzyThresholdPercent);
+      return { ...src, fuzzyThresholdPercent: fuzzy ? report.joinFuzzyThresholdPercent : null };
+    });
     next.sourceCriteria = sourceCriteria;
-    const options = fuzzy ? joinFuzzyOptions(report) : undefined;
-    if (options) {
-      const group: MatchGroup = {
-        source: sourceCriteria,
-        target: next.targetCriteria ?? [],
-        mode: "COMBINE",
-        fuzzyThresholdPercent: report.joinFuzzyThresholdPercent,
-        fuzzyOptions: options,
-        separator: null,
-      };
-      next.joinGroups = [group];
+    const options = joinFuzzyOptions(report);
+    const optionsApply = Boolean(options) && sourceCriteria.some((src, index) =>
+      pairIsFuzzy(src.column, targets[index].column, report.joinFuzzyThresholdPercent));
+    if (optionsApply && options) {
+      next.joinGroups = sourceCriteria.map((src, index) => {
+        const target = targets[index];
+        const fuzzy = pairIsFuzzy(src.column, target.column, report.joinFuzzyThresholdPercent);
+        const group: MatchGroup = {
+          source: [src],
+          target: [target],
+          mode: "COMBINE",
+          fuzzyThresholdPercent: fuzzy ? report.joinFuzzyThresholdPercent : null,
+          separator: null,
+        };
+        if (fuzzy) group.fuzzyOptions = options;
+        return group;
+      });
     } else {
       delete next.joinGroups;
     }
@@ -270,7 +293,8 @@ export function buildExtractRequest(dualMode: boolean, extract: ExtractConfig): 
   }
 
   const tgt = refAsTable(extract.targetRef);
-  if (!tgt || !extract.joinKeySource || !extract.joinKeyTarget) return null;
+  const pairs = joinPairs(extract);
+  if (!tgt || pairs === null) return null;
 
   const targetDisplays: DisplayColumn[] = (extract.targetDisplayCols ?? []).map((column) => ({
     ...tgt,
@@ -287,12 +311,16 @@ export function buildExtractRequest(dualMode: boolean, extract: ExtractConfig): 
     return null;
   }
 
-  const sourceCriteria: MatchCriterion[] = [
-    { ...ref, column: extract.joinKeySource, fuzzyThresholdPercent: null },
-  ];
-  const targetCriteria: MatchCriterion[] = [
-    { ...tgt, column: extract.joinKeyTarget, fuzzyThresholdPercent: null },
-  ];
+  const sourceCriteria: MatchCriterion[] = pairs.map((pair) => ({
+    ...ref,
+    column: pair.sourceColumn,
+    fuzzyThresholdPercent: null,
+  }));
+  const targetCriteria: MatchCriterion[] = pairs.map((pair) => ({
+    ...tgt,
+    column: pair.targetColumn,
+    fuzzyThresholdPercent: null,
+  }));
   const targetRules =
     extract.targetRuleRows.length > 0
       ? buildRulesFromRows(tgt, extract.targetRuleRows)

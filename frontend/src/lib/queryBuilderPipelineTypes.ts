@@ -34,6 +34,8 @@ export type ExtractConfig = {
   targetDisplayCols: string[];
   joinKeySource: string;
   joinKeyTarget: string;
+  /** Further pairs AND-ed with the first source and destination keys. */
+  extraJoinKeys: ExtractJoinKey[];
   joinType: JoinType;
   ruleColumn: string;
   ruleOp: RuleOperator;
@@ -73,8 +75,18 @@ export type AdditionalTableConfig = {
   ruleRows: ExtractRuleRow[];
 };
 
+/** One extra equality on the same source-to-destination join. `id` is list identity only. */
+export type ExtractJoinKey = {
+  id: string;
+  sourceColumn: string;
+  targetColumn: string;
+};
+
 /** How many further tables can be joined beyond the source and destination. */
 export const MAX_ADDITIONAL_TABLES = 5;
+
+/** Source and destination conditions in one join, including the first pair. Matches the backend group cap. */
+export const MAX_JOIN_CONDITIONS = 8;
 
 /** Report Analysis stage — filters, fuzzy/join options, grouping, comparisons. */
 export type ReportConfig = {
@@ -127,6 +139,7 @@ export const EMPTY_EXTRACT_CONFIG: ExtractConfig = {
   targetDisplayCols: [],
   joinKeySource: "",
   joinKeyTarget: "",
+  extraJoinKeys: [],
   joinType: "INNER",
   ruleColumn: "",
   ruleOp: "GT",

@@ -686,6 +686,32 @@ describe("report-stage source filters", () => {
     expect(joinColumnsUseFuzzy("m_id", "m_id")).toBe(false);
   });
 
+  it("ANDs a second join condition and fuzzes only the name pair", () => {
+    const req = buildMergedRequest(
+      true,
+      extract({
+        joinKeySource: "name_en",
+        joinKeyTarget: "nameinenglish",
+        extraJoinKeys: [{ id: "district", sourceColumn: "district", targetColumn: "district_code" }],
+      }),
+      report({ joinFuzzyThresholdPercent: 80, joinFuzzyIgnoreSpaces: true }),
+    )!;
+    expect(req.sourceCriteria.map((column) => column.column)).toEqual(["name_en", "district"]);
+    expect(req.targetCriteria.map((column) => column.column)).toEqual(["nameinenglish", "district_code"]);
+    expect(req.joinGroups).toHaveLength(2);
+    expect(req.joinGroups?.[0]?.fuzzyThresholdPercent).toBe(80);
+    expect(req.joinGroups?.[0]?.fuzzyOptions).toEqual({ ignoreSpaces: true, caseSensitive: false });
+    expect(req.joinGroups?.[1]?.fuzzyThresholdPercent).toBeNull();
+    expect(req.joinGroups?.[1]?.fuzzyOptions).toBeUndefined();
+
+    const restored = hydrateExtractConfigFromRequest(req);
+    expect(restored.joinKeySource).toBe("name_en");
+    expect(restored.joinKeyTarget).toBe("nameinenglish");
+    expect(restored.extraJoinKeys).toEqual([
+      { id: "saved-join-2", sourceColumn: "district", targetColumn: "district_code" },
+    ]);
+  });
+
   it("sends ignore-spaces on the join group and fuzzes an additional name column only", () => {
     const village = { catalog: "iceberg", schema: "srse", table: "village" };
     const req = buildMergedRequest(

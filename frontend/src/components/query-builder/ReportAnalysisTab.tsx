@@ -2306,7 +2306,7 @@ export default function ReportAnalysisTab({
               ? ` · ${pipelineExtract.displayCols.length} attribute(s)`
               : ""}
             {pipelineDualMode && pipelineExtract.joinKeySource
-              ? ` · join ${pipelineExtract.joinKeySource} ↔ ${pipelineExtract.joinKeyTarget}`
+              ? ` · join ${pipelineExtract.joinKeySource} ↔ ${pipelineExtract.joinKeyTarget}${(pipelineExtract.extraJoinKeys ?? []).length > 0 ? ` +${(pipelineExtract.extraJoinKeys ?? []).length}` : ""}`
               : ""}
           </p>
           {isCascadeComplete(pipelineExtract.sourceRef) ? (
