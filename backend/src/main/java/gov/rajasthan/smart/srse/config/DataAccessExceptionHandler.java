@@ -45,6 +45,10 @@ public class DataAccessExceptionHandler {
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(ApiError.of("LAKEHOUSE_UNAVAILABLE", message));
         }
+        if (QueryFailureMessages.isTypeMismatch(ex)) {
+            return ResponseEntity.badRequest()
+                    .body(ApiError.of("TYPE_MISMATCH", message));
+        }
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ApiError.of("QUERY_FAILED", message));
     }

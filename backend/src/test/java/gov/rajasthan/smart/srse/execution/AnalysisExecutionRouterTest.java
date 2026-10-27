@@ -241,6 +241,42 @@ class AnalysisExecutionRouterTest {
     }
 
     @Test
+    void directDateFilterUsesEachDatabasesTemporalType() {
+        String sql = "SELECT count(*) FROM (SELECT * FROM jdbc_7.app.people t WHERE t.dob = CAST(? AS DATE) "
+                + "AND t.updated_at >= CAST(? AS TIMESTAMP WITH TIME ZONE))";
+        assertTrue(route(sql, ExternalDataSourceType.POSTGRESQL).contains("CAST(? AS DATE)"), "postgres");
+        assertTrue(route(sql, ExternalDataSourceType.POSTGRESQL).contains("CAST(? AS TIMESTAMP WITH TIME ZONE)"));
+
+        String mysql = route(sql, ExternalDataSourceType.MYSQL);
+        assertTrue(mysql.contains("CAST(? AS DATE)"), mysql);
+        assertTrue(mysql.contains("CAST(? AS DATETIME)"), mysql);
+        assertFalse(mysql.contains("TIMESTAMP WITH TIME ZONE"), mysql);
+
+        String sqlServer = route(sql, ExternalDataSourceType.SQLSERVER);
+        assertTrue(sqlServer.contains("CAST(? AS DATE)"), sqlServer);
+        assertTrue(sqlServer.contains("CAST(? AS DATETIMEOFFSET)"), sqlServer);
+        assertFalse(sqlServer.contains("TIMESTAMP"), sqlServer);
+
+        String oracle = route(sql, ExternalDataSourceType.ORACLE);
+        assertTrue(oracle.contains("TO_DATE(?, 'YYYY-MM-DD')"), oracle);
+        assertTrue(oracle.contains("TO_TIMESTAMP_TZ(?, 'YYYY-MM-DD HH24:MI:SS')"), oracle);
+        assertFalse(oracle.contains("CAST(? AS DATE)"), oracle);
+
+        String db2 = route(sql, ExternalDataSourceType.DB2);
+        assertTrue(db2.contains("CAST(? AS DATE)"), db2);
+        assertTrue(db2.contains("CAST(? AS TIMESTAMP)"), db2);
+        assertFalse(db2.contains("WITH TIME ZONE"), db2);
+    }
+
+    private String route(String sql, ExternalDataSourceType type) {
+        QualifiedTable logical = new QualifiedTable("jdbc_7", "app", "people");
+        when(registrations.findByCatalogNameAndSchemaNameAndTableName("jdbc_7", "app", "people"))
+                .thenReturn(Optional.of(registration(7L, "app", "people", "app")));
+        when(sources.requireActiveInternal(7L)).thenReturn(source(type, null, "Payroll"));
+        return router.route(sql, List.of(logical)).sql();
+    }
+
+    @Test
     void oracleRewritesLimitAndVarchar() {
         QualifiedTable logical = new QualifiedTable("jdbc_7", "HR", "PEOPLE");
         when(registrations.findByCatalogNameAndSchemaNameAndTableName("jdbc_7", "HR", "PEOPLE"))

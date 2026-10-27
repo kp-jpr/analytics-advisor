@@ -81,14 +81,44 @@ class RuleCompilerTest {
     }
 
     @Test
-    void temporalColumnIsNotCoerced() {
+    void numericColumnCastsATextValueToDouble() {
+        when(registry.describeColumns(eq(TABLE), eq(List.of("age"))))
+                .thenReturn(Map.of("age", column("age", "bigint")));
+        var node = new Ast.PredicateNode(col("age"), Ast.Operator.EQ, "18");
+        CompiledQuery q = compiler.compile(new Ast.PredicateSpec(node), TABLE);
+        assertEquals("t.age = CAST(? AS DOUBLE)", q.predicateSql());
+        assertEquals(List.of("18"), q.params());
+    }
+
+    @Test
+    void dateColumnCastsTheBoundTextToDate() {
         when(registry.describeColumns(eq(TABLE), eq(List.of("dob"))))
                 .thenReturn(Map.of("dob", column("dob", "date")));
-        var node = new Ast.PredicateNode(col("dob"), Ast.Operator.LT, "2000-01-01");
+        var node = new Ast.PredicateNode(col("dob"), Ast.Operator.EQ, "2000-01-01");
         CompiledQuery q = compiler.compile(new Ast.PredicateSpec(node), TABLE);
-        assertEquals("t.dob < ?", q.predicateSql());
+        assertEquals("t.dob = CAST(? AS DATE)", q.predicateSql());
         assertEquals(List.of("2000-01-01"), q.params());
         assertFalse(q.predicateSql().contains("TRY_CAST"));
+        assertFalse(q.predicateSql().contains("CAST(t.dob"));
+    }
+
+    @Test
+    void timestampColumnCastsTheBoundTextToTimestamp() {
+        when(registry.describeColumns(eq(TABLE), eq(List.of("updated_at"))))
+                .thenReturn(Map.of("updated_at", column("updated_at", "timestamp(3) with time zone")));
+        var node = new Ast.PredicateNode(col("updated_at"), Ast.Operator.GTE, "2000-01-01 00:00:00");
+        CompiledQuery q = compiler.compile(new Ast.PredicateSpec(node), TABLE);
+        assertEquals("t.updated_at >= CAST(? AS TIMESTAMP WITH TIME ZONE)", q.predicateSql());
+    }
+
+    @Test
+    void dateInListCastsEveryBoundText() {
+        when(registry.describeColumns(eq(TABLE), eq(List.of("dob"))))
+                .thenReturn(Map.of("dob", column("dob", "date")));
+        var node = new Ast.PredicateNode(col("dob"), Ast.Operator.IN, List.of("2000-01-01", "2001-02-02"));
+        CompiledQuery q = compiler.compile(new Ast.PredicateSpec(node), TABLE);
+        assertEquals("t.dob IN (CAST(? AS DATE), CAST(? AS DATE))", q.predicateSql());
+        assertEquals(List.of("2000-01-01", "2001-02-02"), q.params());
     }
 
     @Test

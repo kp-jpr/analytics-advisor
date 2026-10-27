@@ -27,11 +27,36 @@ public final class QueryFailureMessages {
         if (isConnectivityFailure(ex)) {
             return "The analytical engine is unavailable. Check the Presto connection, then try again.";
         }
+        if (isTypeMismatch(ex)) {
+            return "This comparison does not match the column type on this database. "
+                    + "Enter a date as YYYY-MM-DD. PostgreSQL, DB2, MySQL, SQL Server, Oracle, "
+                    + "and the lakehouse each compare a date only with a date.";
+        }
         if (ex instanceof DataAccessException dataAccess) {
             return "Query failed: " + rootMessage(ex) + failingSql(dataAccess);
         }
         String message = ex.getMessage();
         return message != null && !message.isBlank() ? message : ex.toString();
+    }
+
+    /**
+     * A comparison the engine refused because the two sides are different kinds
+     * of value (a date column against text, a number against a date). Each
+     * database phrases that refusal differently. It is a query the officer can
+     * correct, not an outage and not an internal fault.
+     */
+    public static boolean isTypeMismatch(Throwable ex) {
+        String text = chainText(ex);
+        return text.contains("cannot be applied to")
+                || text.contains("operator does not exist")
+                || text.contains("inconsistent datatypes")
+                || text.contains("operand type clash")
+                || text.contains("conversion failed when converting")
+                || text.contains("sql0401")
+                || text.contains("incompatible data types")
+                || text.contains("incorrect date value")
+                || text.contains("ora-01861")
+                || text.contains("ora-00932");
     }
 
     /**
@@ -53,6 +78,18 @@ public final class QueryFailureMessages {
             }
         }
         return false;
+    }
+
+    private static String chainText(Throwable ex) {
+        StringBuilder text = new StringBuilder();
+        Throwable current = ex;
+        for (int depth = 0; current != null && depth < MAX_CAUSE_DEPTH; current = current.getCause(), depth++) {
+            String message = current.getMessage();
+            if (message != null && !message.isBlank()) {
+                text.append(' ').append(message.toLowerCase(Locale.ROOT));
+            }
+        }
+        return text.toString();
     }
 
     private static boolean transportMessage(String message) {

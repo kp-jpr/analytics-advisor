@@ -2119,7 +2119,7 @@ export default function ReportAnalysisTab({
           </p>
         )}
         {savedQueryNotice?.tone === "error" && (
-          <p className="srse-text-danger" role="alert" style={{ marginBottom: 0 }}>
+          <p className="srse-query-notice" role="status">
             {savedQueryNotice.text}
           </p>
         )}
@@ -2872,7 +2872,7 @@ export default function ReportAnalysisTab({
       </div>
 
       {sqlPreviewError && (
-        <p className={embedded ? "text-danger" : "srse-text-danger"} style={{ textAlign: "right", marginTop: "0.5rem" }}>
+        <p className="srse-query-notice" role="status">
           {sqlPreviewError}
         </p>
       )}
@@ -2896,7 +2896,7 @@ export default function ReportAnalysisTab({
       )}
 
       {matchError && (
-        <p className="srse-text-danger" style={{ textAlign: "right" }}>
+        <p className="srse-query-notice" role="status">
           {matchError}
         </p>
       )}
@@ -2962,7 +2962,7 @@ export default function ReportAnalysisTab({
       )}
 
       {comparisonSummaryError && (
-        <p className="srse-text-danger" style={{ marginTop: "1rem" }}>
+        <p className="srse-query-notice" role="status">
           Comparison summary: {comparisonSummaryError}
         </p>
       )}

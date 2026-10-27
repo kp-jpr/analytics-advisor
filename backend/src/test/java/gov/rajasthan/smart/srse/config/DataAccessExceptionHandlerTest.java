@@ -142,6 +142,21 @@ class DataAccessExceptionHandlerTest {
     }
 
     @Test
+    void typeMismatchIsAHandledBadRequestOnEveryDatabase() {
+        SQLException sql = new SQLException("line 7:17: '=' cannot be applied to date, varchar(10)");
+        ResponseEntity<ApiError> res = handler.dataAccessFailure(new UncategorizedSQLException(
+                "StatementCallback",
+                "SELECT count(*) FROM (SELECT * FROM t WHERE t.dob = ?)",
+                sql));
+
+        assertEquals(HttpStatus.BAD_REQUEST, res.getStatusCode());
+        assertEquals("TYPE_MISMATCH", res.getBody().code());
+        assertTrue(res.getBody().message().contains("YYYY-MM-DD"), res.getBody().message());
+        assertFalse(res.getBody().message().contains("failing query"), res.getBody().message());
+        assertFalse(res.getBody().message().contains("varchar"), res.getBody().message());
+    }
+
+    @Test
     void plainIoExceptionIsAQueryFailureNotAnOutage() {
         SQLException sql = new SQLException("wrapped", new IOException("disk quota exceeded"));
         ResponseEntity<ApiError> res = handler.dataAccessFailure(

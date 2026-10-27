@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Optional;
 import java.lang.reflect.Field;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -70,9 +71,10 @@ class SavedQueryServiceTest {
     }
 
     @Test
-    void reopenReplansUnderCurrentOfficer() {
+    void reopenLoadsTheStoredQueryWithoutCountingRows() {
         AppUser jaipur = user(2L, "jaipurofficer");
-        SavedQuery saved = entity(1L, 99L, minimalRequest());
+        RecordMatchRequest request = minimalRequest();
+        SavedQuery saved = entity(1L, 99L, request);
         when(authenticatedUserService.requireCurrentUser()).thenReturn(jaipur);
         when(savedQueryRepository.findById(1L)).thenReturn(Optional.of(saved));
         when(grantRepository.existsBySavedQueryIdAndGranteeUserId(1L, 2L)).thenReturn(true);
@@ -80,9 +82,43 @@ class SavedQueryServiceTest {
         when(userRepository.findById(99L)).thenReturn(Optional.of(owner));
         org.mockito.Mockito.doNothing().when(adminAuthorizationService).assertCanManageUser(owner, jaipur);
 
-        service.getForCurrentUser(1L);
+        SavedQueryDtos.SavedQueryDetail detail = service.getForCurrentUser(1L);
 
-        verify(matchService).planMatch(any(RecordMatchRequest.class));
+        verify(matchService).planMatchForSave(any(RecordMatchRequest.class));
+        verify(matchService, never()).planMatch(any());
+        assertEquals(1L, detail.id());
+        assertEquals(request, detail.request());
+    }
+
+    @Test
+    void createValidatesOnceWithoutCountingRows() {
+        AppUser me = user(1L, "superadmin");
+        when(authenticatedUserService.requireCurrentUser()).thenReturn(me);
+        when(savedQueryRepository.save(any())).thenAnswer(inv -> withId(inv.getArgument(0), 7L));
+        RecordMatchRequest request = minimalRequest();
+
+        SavedQueryDtos.SavedQueryDetail detail = service.create(
+                new SavedQueryDtos.CreateSavedQueryRequest("Village match", null, request));
+
+        verify(matchService).planMatchForSave(request);
+        verify(matchService, never()).planMatch(any());
+        assertEquals(7L, detail.id());
+        assertEquals("Village match", detail.name());
+        assertEquals(request, detail.request());
+    }
+
+    @Test
+    void updateValidatesOnceWithoutCountingRows() {
+        AppUser me = user(1L, "superadmin");
+        RecordMatchRequest request = minimalRequest();
+        SavedQuery saved = entity(4L, 1L, request);
+        when(authenticatedUserService.requireCurrentUser()).thenReturn(me);
+        when(savedQueryRepository.findById(4L)).thenReturn(Optional.of(saved));
+
+        service.update(4L, new SavedQueryDtos.UpdateSavedQueryRequest("Renamed", null, request));
+
+        verify(matchService).planMatchForSave(request);
+        verify(matchService, never()).planMatch(any());
     }
 
     @Test
@@ -102,15 +138,19 @@ class SavedQueryServiceTest {
         verify(grantRepository, never()).save(any());
     }
 
-    private SavedQuery entity(long id, long ownerId, RecordMatchRequest request) {
-        SavedQuery q = new SavedQuery();
+    private static SavedQuery withId(SavedQuery query, long id) {
         try {
             Field field = SavedQuery.class.getDeclaredField("id");
             field.setAccessible(true);
-            field.set(q, id);
+            field.set(query, id);
         } catch (ReflectiveOperationException e) {
             throw new RuntimeException(e);
         }
+        return query;
+    }
+
+    private SavedQuery entity(long id, long ownerId, RecordMatchRequest request) {
+        SavedQuery q = withId(new SavedQuery(), id);
         q.setOwnerUserId(ownerId);
         q.setName("test");
         q.setPayloadText(codec.encode(request));

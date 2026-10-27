@@ -216,6 +216,7 @@ public class AnalysisExecutionRouter {
             case ORACLE -> adapted.replace(" AS VARCHAR)", " AS VARCHAR2(4000))");
             case POSTGRESQL, DB2 -> adapted;
         };
+        adapted = adaptTemporalCasts(adapted, source.getDatabaseType());
         if (source.getDatabaseType() == ExternalDataSourceType.MYSQL
                 || source.getDatabaseType() == ExternalDataSourceType.MARIADB) {
             adapted = adapted.replace('"', '`');
@@ -230,6 +231,33 @@ public class AnalysisExecutionRouter {
             adapted = stripNullOrdering(adapted);
         }
         return adapted;
+    }
+
+    /**
+     * The query builder emits Presto casts for a typed value ({@code CAST(? AS DATE)}).
+     * Direct JDBC must say the same thing in that database's types, or a date
+     * filter that worked on the lakehouse fails as soon as the source is
+     * Oracle, SQL Server, MySQL, or DB2.
+     *
+     * <p>Longer type names are replaced first so {@code TIMESTAMP WITH TIME ZONE}
+     * is not rewritten as a plain {@code TIMESTAMP}.
+     */
+    private static String adaptTemporalCasts(String sql, ExternalDataSourceType type) {
+        return switch (type) {
+            case SQLSERVER -> sql
+                    .replace("CAST(? AS TIMESTAMP WITH TIME ZONE)", "CAST(? AS DATETIMEOFFSET)")
+                    .replace("CAST(? AS TIMESTAMP)", "CAST(? AS DATETIME2)");
+            case ORACLE -> sql
+                    .replace("CAST(? AS TIMESTAMP WITH TIME ZONE)", "TO_TIMESTAMP_TZ(?, 'YYYY-MM-DD HH24:MI:SS')")
+                    .replace("CAST(? AS TIMESTAMP)", "TO_TIMESTAMP(?, 'YYYY-MM-DD HH24:MI:SS')")
+                    .replace("CAST(? AS DATE)", "TO_DATE(?, 'YYYY-MM-DD')")
+                    .replace("CAST(? AS TIME)", "TO_TIMESTAMP(?, 'HH24:MI:SS')");
+            case MYSQL, MARIADB -> sql
+                    .replace("CAST(? AS TIMESTAMP WITH TIME ZONE)", "CAST(? AS DATETIME)")
+                    .replace("CAST(? AS TIMESTAMP)", "CAST(? AS DATETIME)");
+            case DB2 -> sql.replace("CAST(? AS TIMESTAMP WITH TIME ZONE)", "CAST(? AS TIMESTAMP)");
+            case POSTGRESQL -> sql;
+        };
     }
 
     private static String applySqlServerLimit(String sql) {

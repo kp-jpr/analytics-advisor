@@ -80,7 +80,7 @@ public class SavedQueryService {
         AppUser me = authenticatedUserService.requireCurrentUser();
         SavedQuery query = requireReadable(me, id);
         RecordMatchRequest request = payloadCodec.decode(query.getPayloadText());
-        replanUnderCurrentOfficer(request);
+        validateForSave(request);
         return new SavedQueryDetail(
                 query.getId(),
                 query.getOwnerUserId(),
@@ -95,7 +95,7 @@ public class SavedQueryService {
     public SavedQueryDetail create(CreateSavedQueryRequest body) {
         AppUser me = authenticatedUserService.requireCurrentUser();
         validateName(body.name());
-        replanUnderCurrentOfficer(body.request());
+        validateForSave(body.request());
         Instant now = Instant.now();
         SavedQuery entity = new SavedQuery();
         entity.setOwnerUserId(me.getId());
@@ -106,7 +106,7 @@ public class SavedQueryService {
         entity.setUpdatedAt(now);
         SavedQuery saved = savedQueryRepository.save(entity);
         audit(AuditActionType.SAVED_QUERY_CREATED, "saved query " + saved.getId());
-        return getForCurrentUser(saved.getId());
+        return detailOf(saved, body.request());
     }
 
     @Transactional
@@ -114,13 +114,13 @@ public class SavedQueryService {
         AppUser me = authenticatedUserService.requireCurrentUser();
         SavedQuery query = requireOwned(me, id);
         validateName(body.name());
-        replanUnderCurrentOfficer(body.request());
+        validateForSave(body.request());
         query.setName(body.name().trim());
         query.setDescription(trimOrNull(body.description()));
         query.setPayloadText(payloadCodec.encode(body.request()));
         query.setUpdatedAt(Instant.now());
         audit(AuditActionType.SAVED_QUERY_UPDATED, "saved query " + id);
-        return getForCurrentUser(id);
+        return detailOf(query, body.request());
     }
 
     @Transactional
@@ -160,10 +160,23 @@ public class SavedQueryService {
     }
 
     /**
-     * Re-plans under the current officer's scope — never replays stored SQL.
+     * Checks tables, columns, join shape, and filter SQL under the current officer.
+     * Saving and opening store or restore the definition. The row-count ceiling runs
+     * when the officer runs the query.
      */
-    private void replanUnderCurrentOfficer(RecordMatchRequest request) {
-        matchService.planMatch(request);
+    private void validateForSave(RecordMatchRequest request) {
+        matchService.planMatchForSave(request);
+    }
+
+    private static SavedQueryDetail detailOf(SavedQuery saved, RecordMatchRequest request) {
+        return new SavedQueryDetail(
+                saved.getId(),
+                saved.getOwnerUserId(),
+                saved.getName(),
+                saved.getDescription(),
+                saved.getCreatedAt(),
+                saved.getUpdatedAt(),
+                request);
     }
 
     private SavedQuery requireReadable(AppUser viewer, long id) {

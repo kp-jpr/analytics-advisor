@@ -1047,6 +1047,23 @@ class RecordMatchServiceTest {
     }
 
     @Test
+    void moreThanEightDisplayColumnsAreProjected() {
+        List<DisplayColumn> columns = new java.util.ArrayList<>();
+        for (int i = 1; i <= 9; i++) {
+            columns.add(display("beneficiary", "attr_" + i));
+        }
+        RecordMatchRequest req = new RecordMatchRequest(
+                List.of(exact("beneficiary", "m_id")),
+                List.of(exact("bank_txn", "m_id")),
+                columns,
+                List.of(),
+                List.of(),
+                false, null, JoinType.INNER);
+        String sql = service.planMatch(req).sql();
+        assertTrue(sql.contains("source_attr_9"), sql);
+    }
+
+    @Test
     void displayColumnDuplicatingJoinCriterionIsProjectedOnce() throws Exception {
         RecordMatchRequest req = new RecordMatchRequest(
                 List.of(exact("beneficiary", "jan_aadhaar")),
@@ -1771,11 +1788,45 @@ class RecordMatchServiceTest {
     }
 
     @Test
+    void fuzzyDistinctEstimateCastsANumericColumnBeforeLower() {
+        stubTypes("citizen_address", "jan_member_id", "bigint");
+        stubTypes("citizen", "member_name", "varchar");
+        RecordMatchRequest req = new RecordMatchRequest(
+                List.of(fuzzy("citizen_address", "jan_member_id", 80.0)),
+                List.of(exact("citizen", "member_name")),
+                null, null, List.of(), false, null, JoinType.INNER);
+        assertDoesNotThrow(() -> service.planMatch(req));
+        String numeric = qualified("citizen_address") + ".jan_member_id";
+        verify(jdbc, atLeastOnce()).queryForObject(
+                contains("substr(lower(CAST(" + numeric + " AS VARCHAR)), 1, 3)"),
+                eq(Long.class));
+        verify(jdbc, never()).queryForObject(contains("lower(" + numeric + ")"), eq(Long.class));
+        verify(jdbc, atLeastOnce()).queryForObject(
+                contains("substr(lower(" + qualified("citizen") + ".member_name), 1, 3)"),
+                eq(Long.class));
+    }
+
+    @Test
     void missingCatalogStatsFallsBackToLiveAggregates() {
         RecordMatchRequest req = new RecordMatchRequest(
                 List.of(exact("beneficiary", "m_id")),
                 List.of(exact("bank_txn", "m_id")),
                 null, null, List.of(), false, null, JoinType.INNER);
+        assertDoesNotThrow(() -> service.planMatch(req));
+        verify(jdbc, atLeastOnce()).queryForObject(contains("count(*)"), eq(Long.class));
+    }
+
+    @Test
+    void savePlanSkipsTheLiveRowCountThatRunStillPerforms() {
+        RecordMatchRequest req = new RecordMatchRequest(
+                List.of(exact("beneficiary", "m_id")),
+                List.of(exact("bank_txn", "m_id")),
+                null, null, List.of(), false, null, JoinType.INNER);
+        String sql = service.planMatchForSave(req).sql();
+        assertTrue(sql.contains("beneficiary"), sql);
+        verify(jdbc, never()).queryForObject(contains("approx_distinct"), eq(Long.class));
+        verify(jdbc, never()).queryForObject(contains("count(*)"), eq(Long.class));
+
         assertDoesNotThrow(() -> service.planMatch(req));
         verify(jdbc, atLeastOnce()).queryForObject(contains("count(*)"), eq(Long.class));
     }

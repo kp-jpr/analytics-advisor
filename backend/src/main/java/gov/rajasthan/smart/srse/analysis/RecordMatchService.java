@@ -151,6 +151,7 @@ public class RecordMatchService {
 
     /**
      * Validates the request and builds the Presto match query without executing it.
+     * A join also counts rows so a match above the ceiling is refused before it runs.
      */
     public MatchQuery planMatch(RecordMatchRequest req) {
         PlanTrace trace = new PlanTrace();
@@ -159,7 +160,7 @@ public class RecordMatchService {
         PLAN_TRACE.set(trace);
         long started = System.nanoTime();
         try {
-            MatchQuery query = planMatchBody(req);
+            MatchQuery query = planMatchBody(req, true);
             trace.planMs = elapsedMs(started);
             return query;
         } catch (RuntimeException ex) {
@@ -168,7 +169,15 @@ public class RecordMatchService {
         }
     }
 
-    private MatchQuery planMatchBody(RecordMatchRequest req) {
+    /**
+     * Same checks and SQL as {@link #planMatch}, without the live row-count ceiling.
+     * Saving stores the definition; the ceiling runs when the officer runs the query.
+     */
+    public MatchQuery planMatchForSave(RecordMatchRequest req) {
+        return planMatchBody(req, false);
+    }
+
+    private MatchQuery planMatchBody(RecordMatchRequest req, boolean estimateRows) {
         validateExtractRunOptions(req);
         MatchQuery query;
         if (req.singleSource()) {
@@ -186,7 +195,7 @@ public class RecordMatchService {
             for (AdditionalJoin extra : req.additionalJoins()) {
                 referenced.add(extra.qualifiedTable());
             }
-            query = route(buildMatchQuery(req, join, sides), referenced);
+            query = route(buildMatchQuery(req, join, sides, estimateRows), referenced);
         }
         return applyExtractRunModifiers(query, req);
     }
@@ -903,7 +912,7 @@ public class RecordMatchService {
         }
     }
 
-    private MatchQuery buildMatchQuery(RecordMatchRequest req, JoinPlan join, Sides sides) {
+    private MatchQuery buildMatchQuery(RecordMatchRequest req, JoinPlan join, Sides sides, boolean estimateRows) {
         JoinType joinType = JoinType.effective(req.joinType());
         List<Object> params = new ArrayList<>();
         Set<String> outerColumns = new LinkedHashSet<>();
@@ -926,9 +935,11 @@ public class RecordMatchService {
                 sides.targetColumns()).scope();
         List<PlannedExtra> plannedExtras = planAdditionalTables(req);
         List<ScopeFilteredFrom> extraScopes = plannedExtras.stream().map(PlannedExtra::scope).toList();
-        enforceEstimatedRowCeiling(
-                sides, groups, sourceScope, targetScope, req.grouped(),
-                req.additionalJoins(), extraScopes);
+        if (estimateRows) {
+            enforceEstimatedRowCeiling(
+                    sides, groups, sourceScope, targetScope, req.grouped(),
+                    req.additionalJoins(), extraScopes);
+        }
 
         List<ComparisonPlan> comparisonPlans = List.of();
         String dedupAlias = null;
@@ -1124,10 +1135,6 @@ public class RecordMatchService {
             extra.qualifiedTable();
             LakehouseIdentifiers.requireSafe("sourceColumn", extra.sourceColumn());
             LakehouseIdentifiers.requireSafe("joinColumn", extra.joinColumn());
-            if (extra.displayColumns().size() > MAX_CRITERIA_PER_SIDE) {
-                throw new IllegalArgumentException(
-                        "additionalJoins[" + i + "] must have 0 to " + MAX_CRITERIA_PER_SIDE + " display columns");
-            }
             for (String column : extra.displayColumns()) {
                 LakehouseIdentifiers.requireSafe("displayColumn", column);
             }
@@ -1676,10 +1683,10 @@ public class RecordMatchService {
         for (GroupPlan group : groups) {
             long sourceDistinct = sideDistinctEstimate(
                     sides.sourceTable(), sourceScope, group.group().source(), group.fuzzy(),
-                    group.group().fuzzyOptions(), sourceStats);
+                    group.group().fuzzyOptions(), sourceStats, sides.sourceColumns());
             long targetDistinct = sideDistinctEstimate(
                     sides.targetTable(), targetScope, group.group().target(), group.fuzzy(),
-                    group.group().fuzzyOptions(), targetStats);
+                    group.group().fuzzyOptions(), targetStats, sides.targetColumns());
             long groupMax = Math.max(sourceDistinct, targetDistinct);
             if (groupMax <= 0) {
                 return;
@@ -1714,12 +1721,12 @@ public class RecordMatchService {
                                 List.of(new MatchCriterion(
                                         sides.sourceTable().catalog(), sides.sourceTable().schema(),
                                         sides.sourceTable().table(), column, null)),
-                                false, null, sourceStats));
+                                false, null, sourceStats, sides.sourceColumns()));
                 long extraDistinct = sideDistinctEstimate(
                         extraTable, extraScope,
                         List.of(new MatchCriterion(
                                 extra.catalog(), extra.schema(), extra.table(), extra.joinColumn(), null)),
-                        false, null, extraStats);
+                        false, null, extraStats, Map.of());
                 long groupMax = Math.max(sourceDistinct, extraDistinct);
                 if (groupMax <= 0) {
                     return;
@@ -1949,7 +1956,8 @@ public class RecordMatchService {
             List<MatchCriterion> columns,
             boolean fuzzy,
             FuzzyOptions fuzzyOptions,
-            TableStats stats) {
+            TableStats stats,
+            Map<String, RegisteredColumn> described) {
         if (columns.isEmpty()) {
             return 1;
         }
@@ -1966,12 +1974,18 @@ public class RecordMatchService {
             // A fuzzy group joins on the blocking-key EXPRESSION, and no catalog
             // statistic describes substr(lower(col), 1, n) — that one is always
             // computed. Exact groups join on the bare column, which stats cover.
+            // lower() accepts only text. The join already casts a numeric side;
+            // the estimate has to do the same or Presto rejects lower(bigint).
             Long fromStats = (fuzzy || scope.appliesFilter()) ? null : stats.distinctFor(c.column());
             String columnRef = columnQualifier + "." + c.column();
+            String valueExpr = fuzzy
+                    ? blockingKeyExpr(
+                            TypeCoercion.asText(columnRef, familyOf(described, c.column())),
+                            fuzzyOptions)
+                    : columnRef;
             long distinct = fromStats != null
                     ? fromStats
-                    : queryApproxDistinct(
-                            fromExpr, scope, fuzzy ? blockingKeyExpr(columnRef, fuzzyOptions) : columnRef, table);
+                    : queryApproxDistinct(fromExpr, scope, valueExpr, table);
             product = multiplyCap(product, distinct, ceiling);
         }
         return product;
@@ -2226,9 +2240,6 @@ public class RecordMatchService {
     private void validateDisplayColumns(List<DisplayColumn> columns, QualifiedTable sideTable, String label) {
         if (columns.isEmpty()) {
             return;
-        }
-        if (columns.size() > MAX_CRITERIA_PER_SIDE) {
-            throw new IllegalArgumentException(label + " must have 0 to " + MAX_CRITERIA_PER_SIDE + " entries");
         }
         for (int i = 0; i < columns.size(); i++) {
             DisplayColumn d = columns.get(i);

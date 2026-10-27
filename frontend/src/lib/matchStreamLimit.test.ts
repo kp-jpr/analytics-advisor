@@ -18,5 +18,11 @@ describe("analytical engine errors", () => {
     expect(presentQueryError("Column 'bogus' cannot be resolved", friendly)).toBe(
       "Column 'bogus' cannot be resolved",
     );
+    expect(
+      presentQueryError(
+        "Analysis service error 400: sourceDisplayColumns must have 0 to 8 entries",
+        friendly,
+      ),
+    ).toBe("sourceDisplayColumns must have 0 to 8 entries");
   });
 });

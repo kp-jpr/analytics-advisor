@@ -328,6 +328,17 @@ a {
   font-weight: 600;
 }
 
+.srse-query-notice {
+  margin: 0.75rem 0 0;
+  padding: 0.7rem 0.85rem;
+  border-radius: var(--srse-radius-sm);
+  border: 1px solid var(--srse-border);
+  border-left: 4px solid var(--srse-warning);
+  background: var(--srse-surface);
+  color: var(--srse-text);
+  font-size: 0.9rem;
+}
+
 .srse-text-muted {
   color: var(--srse-text-muted);
   font-size: 0.85rem;

@@ -147,4 +147,42 @@ describe("Query builder save and open", () => {
     expect(document.body.textContent).toContain(I18N.en.msgQuerySaveIncomplete);
     expect(document.body.textContent).not.toContain(I18N.en.msgQuerySaved);
   });
+
+  it("opens a saved query into the builder", async () => {
+    listSavedQueries.mockResolvedValue([savedSummary("Village match")]);
+    getSavedQuery.mockResolvedValue({
+      ...savedSummary("Village match"),
+      createdAt: "2026-10-27T00:00:00Z",
+      request: {
+        sourceCriteria: [
+          { catalog: "iceberg", schema: "srse", table: "beneficiary", column: "m_id", fuzzyThresholdPercent: null },
+        ],
+        targetCriteria: [
+          { catalog: "iceberg", schema: "srse", table: "bank_txn", column: "m_id", fuzzyThresholdPercent: null },
+        ],
+        sourceDisplayColumns: [
+          { catalog: "iceberg", schema: "srse", table: "beneficiary", column: "district" },
+        ],
+        targetDisplayColumns: [],
+        singleSource: false,
+      },
+    });
+    await renderBar();
+
+    const select = document.querySelector("select") as HTMLSelectElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value")?.set;
+      setter?.call(select, "7");
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(getSavedQuery).toHaveBeenCalledWith(7);
+    const extract = useQueryBuilderPipeline.getState().extract;
+    expect(extract.sourceRef).toEqual({ catalog: "iceberg", schema: "srse", table: "beneficiary" });
+    expect(extract.joinKeySource).toBe("m_id");
+    expect(extract.displayCols).toEqual(["district"]);
+    expect(document.body.textContent).toContain("Loaded “Village match”");
+  });
 });

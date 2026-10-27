@@ -1076,8 +1076,8 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
             )}
           </div>
         </div>
-        {sqlPreviewError && <p className="text-danger">{sqlPreviewError}</p>}
-        {matchError && <p className="text-danger">{matchError}</p>}
+        {sqlPreviewError && <p className="srse-query-notice" role="status">{sqlPreviewError}</p>}
+        {matchError && <p className="srse-query-notice" role="status">{matchError}</p>}
       </section>
 
       {unparseableTotals.length > 0 && (

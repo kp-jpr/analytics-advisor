@@ -16,7 +16,10 @@ export function isAnalyticalEngineDown(message: string): boolean {
   return ANALYTICAL_ENGINE_MARKERS.some((marker) => text.includes(marker));
 }
 
+const ANALYSIS_SERVICE_PREFIX = /^Analysis service error \d+:\s*/i;
+
 /** Replaces a raw connection failure with the officer-facing sentence. */
 export function presentQueryError(message: string, engineDownText: string): string {
-  return isAnalyticalEngineDown(message) ? engineDownText : message;
+  const text = message.replace(ANALYSIS_SERVICE_PREFIX, "").trim();
+  return isAnalyticalEngineDown(text) ? engineDownText : text;
 }

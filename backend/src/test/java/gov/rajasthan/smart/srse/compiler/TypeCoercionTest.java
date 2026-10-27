@@ -52,6 +52,15 @@ class TypeCoercionTest {
     }
 
     @Test
+    void dateVersusTextComparesAsDatesByDefault() {
+        TypeCoercion.Aligned aligned = TypeCoercion.align(
+                "src.dob", SqlTypeFamily.TEXT, "tgt.dob", SqlTypeFamily.TEMPORAL, CompareAs.AUTO);
+
+        assertEquals("TRY_CAST(src.dob AS DATE)", aligned.left());
+        assertEquals("tgt.dob", aligned.right());
+    }
+
+    @Test
     void dateOverrideCastsNonTemporalSides() {
         TypeCoercion.Aligned aligned = TypeCoercion.align(
                 "src.dob", SqlTypeFamily.TEXT, "tgt.dob", SqlTypeFamily.TEMPORAL, CompareAs.DATE);
@@ -131,5 +140,14 @@ class TypeCoercionTest {
                 TypeCoercion.alignColumnToValue("tbl.is_bpl", SqlTypeFamily.TEXT, SqlTypeFamily.BOOLEAN));
         assertEquals("tbl.dob",
                 TypeCoercion.alignColumnToValue("tbl.dob", SqlTypeFamily.TEXT, SqlTypeFamily.TEMPORAL));
+    }
+
+    @Test
+    void boundTextCastsToTheColumnTemporalType() {
+        assertEquals("DATE", TypeCoercion.temporalSqlType("date"));
+        assertEquals("TIMESTAMP", TypeCoercion.temporalSqlType("timestamp(3)"));
+        assertEquals("TIMESTAMP WITH TIME ZONE", TypeCoercion.temporalSqlType("timestamp(3) with time zone"));
+        assertEquals("TIME", TypeCoercion.temporalSqlType("time"));
+        assertEquals("DATE", TypeCoercion.temporalSqlType(null));
     }
 }

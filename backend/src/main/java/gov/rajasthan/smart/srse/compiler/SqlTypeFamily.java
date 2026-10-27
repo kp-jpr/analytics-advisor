@@ -44,6 +44,24 @@ public enum SqlTypeFamily {
             "double", "real", "float", "decimal", "numeric");
     private static final Set<String> TEMPORAL_TYPES = Set.of("date", "timestamp", "time", "datetime");
 
+    /**
+     * Family JDBC will actually send. A numeric-looking string is still text:
+     * the driver binds it as varchar, and a date or number column cannot be
+     * compared with that until it is cast.
+     */
+    public static SqlTypeFamily ofBound(Object value) {
+        if (value == null) {
+            return UNKNOWN;
+        }
+        if (value instanceof Number) {
+            return NUMBER;
+        }
+        if (value instanceof Boolean) {
+            return BOOLEAN;
+        }
+        return TEXT;
+    }
+
     /** Logical family of an officer-supplied bound value (Rule Engine path). */
     public static SqlTypeFamily ofValue(Object value) {
         if (value == null) {

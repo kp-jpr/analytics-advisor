@@ -156,23 +156,32 @@ export async function authorizedFetch(
     headers: { ...init.headers, Authorization: `Bearer ${token}` },
   });
   if (res.status === 401) {
-    clearAuthToken();
-    if (typeof window !== "undefined") {
-      window.location.href = `/login?returnTo=${encodeURIComponent(window.location.pathname)}`;
-    }
+    redirectToLogin();
     throw new SrseAuthRequiredError();
   }
-  if (scope === "admin" && res.status === 403) {
+  if (res.status === 403) {
     const session = await fetchAuthSession();
     if (session?.mustChangePassword) {
       if (typeof window !== "undefined" && !window.location.pathname.startsWith("/change-password")) {
         window.location.href = "/change-password";
       }
-    } else {
+    } else if (!session) {
+      // A restarted backend rejects the previous bearer. Spring reports that
+      // as 403 Forbidden, which is not a failed query or a failed save.
+      redirectToLogin();
+      throw new SrseAuthRequiredError();
+    } else if (scope === "admin" && !session.admin) {
       throw new SrseAdminAccessDeniedError();
     }
   }
   return res;
+}
+
+function redirectToLogin(): void {
+  clearAuthToken();
+  if (typeof window !== "undefined") {
+    window.location.href = `/login?returnTo=${encodeURIComponent(window.location.pathname)}`;
+  }
 }
 
 /** Officers who signed in from the admin URL go to the workspace, not the admin gate. */

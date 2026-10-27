@@ -87,62 +87,85 @@ public class RuleCompiler {
             described = columns.resolve(p.column(), table);
         }
         SqlTypeFamily columnFamily = SqlTypeFamily.of(described.dataType());
-        String colRef = columnRef(p.column().column(), columnFamily, p.operator(), p.value());
+        String columnName = p.column().column();
         return switch (p.operator()) {
-            case EQ  -> bind(colRef + " = ?",  p.value(), params);
-            case NE  -> bind(colRef + " <> ?", p.value(), params);
-            case LT  -> bind(colRef + " < ?",  p.value(), params);
-            case LTE -> bind(colRef + " <= ?", p.value(), params);
-            case GT  -> bind(colRef + " > ?",  p.value(), params);
-            case GTE -> bind(colRef + " >= ?", p.value(), params);
+            case EQ  -> emitComparison(columnName, "=", described, columnFamily, p.value(), params);
+            case NE  -> emitComparison(columnName, "<>", described, columnFamily, p.value(), params);
+            case LT  -> emitComparison(columnName, "<", described, columnFamily, p.value(), params);
+            case LTE -> emitComparison(columnName, "<=", described, columnFamily, p.value(), params);
+            case GT  -> emitComparison(columnName, ">", described, columnFamily, p.value(), params);
+            case GTE -> emitComparison(columnName, ">=", described, columnFamily, p.value(), params);
 
-            case IS_TRUE  -> colRef + " = TRUE";
-            case IS_FALSE -> colRef + " = FALSE";
-            case IS_NULL  -> colRef + " IS NULL";
-            case NOT_NULL -> colRef + " IS NOT NULL";
+            case IS_TRUE  -> TABLE_ALIAS + "." + columnName + " = TRUE";
+            case IS_FALSE -> TABLE_ALIAS + "." + columnName + " = FALSE";
+            case IS_NULL  -> TABLE_ALIAS + "." + columnName + " IS NULL";
+            case NOT_NULL -> TABLE_ALIAS + "." + columnName + " IS NOT NULL";
 
-            case IN     -> emitIn(colRef, requireListValue(p.value(), "IN"), params, false);
-            case NOT_IN -> emitIn(colRef, requireListValue(p.value(), "NOT_IN"), params, true);
+            case IN -> emitIn(columnName, described, columnFamily, requireListValue(p.value(), "IN"), params, false);
+            case NOT_IN -> emitIn(columnName, described, columnFamily, requireListValue(p.value(), "NOT_IN"), params, true);
 
-            case BETWEEN -> emitBetween(colRef, requireListValue(p.value(), "BETWEEN"), params);
+            case BETWEEN -> emitBetween(columnName, described, columnFamily, requireListValue(p.value(), "BETWEEN"), params);
 
-            case FUZZY_MATCH -> emitFuzzyMatch(p.column().column(), colRef, (List<Object>) p.value(), params, fuzzyCtx);
+            case FUZZY_MATCH -> emitFuzzyMatch(
+                    columnName,
+                    TypeCoercion.asText(TABLE_ALIAS + "." + columnName, columnFamily),
+                    (List<Object>) p.value(),
+                    params,
+                    fuzzyCtx);
         };
     }
 
-    private String columnRef(String columnName, SqlTypeFamily columnFamily,
-                             Ast.Operator operator, Object value) {
+    /**
+     * The column type is read first. A value JDBC would send as a different
+     * kind is cast to that type. A real number filtered against a text column
+     * still casts the column, so {@code 123} and {@code '0123'} can meet.
+     */
+    private String emitComparison(
+            String columnName,
+            String operator,
+            RegisteredColumn described,
+            SqlTypeFamily columnFamily,
+            Object value,
+            List<Object> params) {
         String bare = TABLE_ALIAS + "." + columnName;
-        if (operator == Ast.Operator.IS_NULL
-                || operator == Ast.Operator.NOT_NULL
-                || operator == Ast.Operator.IS_TRUE
-                || operator == Ast.Operator.IS_FALSE) {
-            return bare;
+        SqlTypeFamily bound = SqlTypeFamily.ofBound(value);
+        String columnSql = bare;
+        String valueSql = "?";
+        if (columnFamily == SqlTypeFamily.TEXT && bound == SqlTypeFamily.NUMBER) {
+            columnSql = TypeCoercion.asNumber(bare, columnFamily);
+        } else if (TypeCoercion.shouldCastBoundValue(columnFamily, bound)) {
+            valueSql = TypeCoercion.boundValueCast(described.dataType(), columnFamily);
         }
-        if (columnFamily == SqlTypeFamily.BOOLEAN || columnFamily == SqlTypeFamily.TEMPORAL) {
-            return bare;
-        }
-        if (value == null) {
-            return bare;
-        }
-        return TypeCoercion.alignColumnToValue(bare, columnFamily, SqlTypeFamily.ofValue(value));
-    }
-
-    private String bind(String frag, Object value, List<Object> params) {
         params.add(value);
-        return frag;
+        return columnSql + " " + operator + " " + valueSql;
     }
 
-    private String emitIn(String col, List<Object> values, List<Object> params, boolean negate) {
+    private String emitIn(
+            String columnName,
+            RegisteredColumn described,
+            SqlTypeFamily columnFamily,
+            List<Object> values,
+            List<Object> params,
+            boolean negate) {
         if (values == null || values.isEmpty()) {
             return negate ? "TRUE" : "FALSE";
         }
+        String bare = TABLE_ALIAS + "." + columnName;
+        boolean allNumbers = values.stream().allMatch(v -> v instanceof Number);
+        String columnSql = bare;
+        String valueSql = "?";
+        if (columnFamily == SqlTypeFamily.TEXT && allNumbers) {
+            columnSql = TypeCoercion.asNumber(bare, columnFamily);
+        } else if (values.stream().anyMatch(v ->
+                TypeCoercion.shouldCastBoundValue(columnFamily, SqlTypeFamily.ofBound(v)))) {
+            valueSql = TypeCoercion.boundValueCast(described.dataType(), columnFamily);
+        }
         StringJoiner ph = new StringJoiner(", ", "(", ")");
         for (Object v : values) {
-            ph.add("?");
+            ph.add(valueSql);
             params.add(v);
         }
-        return col + (negate ? " NOT IN " : " IN ") + ph;
+        return columnSql + (negate ? " NOT IN " : " IN ") + ph;
     }
 
     /** Jackson may bind JSON arrays as {@code List<?>}; avoid a raw cast that becomes ClassCastException → 500. */
@@ -153,13 +176,28 @@ public class RuleCompiler {
         return new ArrayList<>(list);
     }
 
-    private String emitBetween(String col, List<Object> bounds, List<Object> params) {
+    private String emitBetween(
+            String columnName,
+            RegisteredColumn described,
+            SqlTypeFamily columnFamily,
+            List<Object> bounds,
+            List<Object> params) {
         if (bounds == null || bounds.size() != 2) {
             throw new IllegalArgumentException("BETWEEN requires exactly two bounds");
         }
+        String bare = TABLE_ALIAS + "." + columnName;
+        boolean allNumbers = bounds.stream().allMatch(v -> v instanceof Number);
+        String columnSql = bare;
+        String valueSql = "?";
+        if (columnFamily == SqlTypeFamily.TEXT && allNumbers) {
+            columnSql = TypeCoercion.asNumber(bare, columnFamily);
+        } else if (bounds.stream().anyMatch(v ->
+                TypeCoercion.shouldCastBoundValue(columnFamily, SqlTypeFamily.ofBound(v)))) {
+            valueSql = TypeCoercion.boundValueCast(described.dataType(), columnFamily);
+        }
         params.add(bounds.get(0));
         params.add(bounds.get(1));
-        return col + " BETWEEN ? AND ?";
+        return columnSql + " BETWEEN " + valueSql + " AND " + valueSql;
     }
 
     private String emitFuzzyMatch(

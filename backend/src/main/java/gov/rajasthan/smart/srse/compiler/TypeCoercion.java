@@ -62,10 +62,14 @@ public final class TypeCoercion {
         if (leftType == rightType) {
             return new Aligned(leftSql, rightSql);
         }
-        // Mixed families under AUTO. A number on either side means compare as
-        // numbers; anything else mixed (temporal vs boolean, say) has no
-        // meaningful arithmetic reading, and text is the only representation
-        // both can reach at all.
+        // The column types are known before the join is written. A date
+        // matched to text is compared as a date; a number matched to text
+        // is compared as a number. Anything else mixed (a date against a
+        // flag, for example) has no shared reading except text.
+        if ((leftType == SqlTypeFamily.TEMPORAL && rightType == SqlTypeFamily.TEXT)
+                || (rightType == SqlTypeFamily.TEMPORAL && leftType == SqlTypeFamily.TEXT)) {
+            return new Aligned(asDate(leftSql, leftType), asDate(rightSql, rightType));
+        }
         if (leftType == SqlTypeFamily.NUMBER || rightType == SqlTypeFamily.NUMBER) {
             return new Aligned(asNumber(leftSql, leftType), asNumber(rightSql, rightType));
         }
@@ -106,6 +110,53 @@ public final class TypeCoercion {
             return sql;
         }
         return "TRY_CAST(" + sql + " AS DATE)";
+    }
+
+    /**
+     * Presto type a bound string must be cast to before it can be compared
+     * with a temporal column. JDBC sends the officer's text as varchar, and
+     * Presto rejects {@code date = varchar} outright. The column stays a
+     * date; {@code CAST} (not {@code TRY_CAST}) still fails the query when
+     * the text is not a date.
+     */
+    /**
+     * Cast a bound placeholder to the column's family. Used when the filter
+     * value's JDBC type is not already that family.
+     */
+    public static String boundValueCast(String dataType, SqlTypeFamily columnFamily) {
+        return switch (columnFamily) {
+            case TEMPORAL -> "CAST(? AS " + temporalSqlType(dataType) + ")";
+            case NUMBER -> "CAST(? AS DOUBLE)";
+            case BOOLEAN -> "CAST(? AS BOOLEAN)";
+            default -> "?";
+        };
+    }
+
+    /** True when a filter value must be cast to the column type before comparison. */
+    public static boolean shouldCastBoundValue(SqlTypeFamily columnFamily, SqlTypeFamily boundFamily) {
+        if (boundFamily == SqlTypeFamily.UNKNOWN || boundFamily == columnFamily) {
+            return false;
+        }
+        return columnFamily == SqlTypeFamily.TEMPORAL
+                || columnFamily == SqlTypeFamily.NUMBER
+                || columnFamily == SqlTypeFamily.BOOLEAN;
+    }
+
+    public static String temporalSqlType(String dataType) {
+        if (dataType == null) {
+            return "DATE";
+        }
+        String lower = dataType.trim().toLowerCase(java.util.Locale.ROOT);
+        if (lower.startsWith("timestamp") && lower.contains("with time zone")) {
+            return "TIMESTAMP WITH TIME ZONE";
+        }
+        if (lower.startsWith("timestamp") || lower.startsWith("datetime")) {
+            return "TIMESTAMP";
+        }
+        if (lower.startsWith("time")) {
+            return "TIME";
+        }
+        return "DATE";
     }
 
     /**

@@ -145,7 +145,7 @@ export function QueryBuilderSavedQueryOpen({ onLoaded }: { onLoaded: () => void 
         </p>
       )}
       {notice?.tone === "error" && (
-        <p className="srse-text-danger" role="alert" style={{ marginBottom: 0 }}>
+        <p className="srse-query-notice" role="status">
           {notice.text}
         </p>
       )}
