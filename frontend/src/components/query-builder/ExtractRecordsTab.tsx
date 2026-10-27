@@ -37,6 +37,7 @@ import {
   retainValidDisplayColumns,
   selectAllDisplayColumns,
   toggleDisplayColumnSelection,
+  withoutCountOnly,
 } from "@/lib/queryBuilderRequestBuild";
 import { MetadataColumnStatus } from "@/components/query-builder/MetadataColumnStatus";
 import { useQueryBuilderPipeline } from "@/lib/queryBuilderPipelineStore";
@@ -602,6 +603,7 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
   const [matchTotalRows, setMatchTotalRows] = useState<number | null>(null);
   const [matchTooManyToDisplay, setMatchTooManyToDisplay] = useState(false);
   const [matchCountIsPartial, setMatchCountIsPartial] = useState(false);
+  const [chartRequest, setChartRequest] = useState<RecordMatchRequest | null>(null);
   const lastRunRequestRef = useRef<RecordMatchRequest | null>(null);
   const restoredFromPipelineRef = useRef(false);
   const pendingRowsRef = useRef<Record<string, unknown>[]>([]);
@@ -620,12 +622,16 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
     if (columns.length === 0 || rows.length === 0) {
       return;
     }
+    const exportReq = lastRunRequestRef.current
+      ? withoutCountOnly(lastRunRequestRef.current)
+      : null;
+    setChartRequest(exportReq);
     setLastResult({
       columns,
       rows,
       totalRows,
       source: "extract",
-      matchExportRequest: lastRunRequestRef.current,
+      matchExportRequest: exportReq,
     });
   }
 
@@ -680,6 +686,14 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
     setMatchStatus("ok");
     if (baseExtractRequest) {
       lastRunRequestRef.current = baseExtractRequest;
+      setChartRequest(withoutCountOnly(baseExtractRequest));
+    }
+    if (
+      extractResult.totalRows != null
+      && extractResult.totalRows > extractResult.rows.length
+    ) {
+      setMatchTooManyToDisplay(true);
+      setMatchCountIsPartial(true);
     }
   }, [extractResult, baseExtractRequest]);
 
@@ -775,6 +789,7 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
     setMatchTotalRows(null);
     setMatchTooManyToDisplay(false);
     setMatchCountIsPartial(false);
+    setChartRequest(null);
     lastRunRequestRef.current = req;
 
     flushIntervalRef.current = setInterval(flushPendingRows, 200);
@@ -869,10 +884,11 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
   }
 
   async function downloadFullExport(format: MatchExportFormat) {
-    const req =
-      baseExtractRequest ??
+    const raw =
+      lastRunRequestRef.current ??
       buildExtractExportRequest(dualMode, extract) ??
-      lastRunRequestRef.current;
+      baseExtractRequest;
+    const req = raw ? withoutCountOnly(raw) : null;
     if (!req) {
       throw new Error("Run a query first.");
     }
@@ -1201,6 +1217,7 @@ export default function ExtractRecordsTab({ onGoReport }: Readonly<ExtractRecord
             displayLimit={MAX_DISPLAYED_ROWS}
             onDownloadFullCsv={() => downloadFullExport("csv")}
             onDownloadFullExport={downloadFullExport}
+            chartRequest={chartRequest}
             highlightDuplicates={false}
             dedupAvailable={false}
             dedupEnabled={false}

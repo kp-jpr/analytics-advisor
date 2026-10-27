@@ -30,6 +30,7 @@ import java.nio.charset.StandardCharsets;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -1940,5 +1941,81 @@ class RecordMatchServiceTest {
         assertEquals(40L, summary.noCounterpartRows());
         assertEquals(90.0, summary.columns().get(0).matchRatePercent());
         assertTrue(sqlCaptor.getValue().contains("\"match_status\" = 'MATCHED'"), sqlCaptor.getValue());
+    }
+
+    @Test
+    void chartBucketsGroupTheFullMatchAndFoldTheRestIntoOther() {
+        RecordMatchRequest limited = new RecordMatchRequest(
+                List.of(exact("beneficiary", "district")),
+                List.of(exact("beneficiary", "district")),
+                null, null, List.of(), false, null, null, List.of(), false,
+                null, null, false, List.of(), List.of(), 10_000, false, List.of());
+        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+        List<Map<String, Object>> groups = new ArrayList<>();
+        for (int i = 0; i < 51; i++) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("c0", "v" + i);
+            row.put("bucket_count", 10L);
+            row.put("total_rows", 1000L);
+            groups.add(row);
+        }
+        when(jdbc.queryForList(sqlCaptor.capture(), any(Object[].class))).thenReturn(groups);
+
+        ChartBucketsResponse summary = service.chartBuckets(limited, List.of("source_district"));
+
+        String sql = sqlCaptor.getValue();
+        assertTrue(sql.contains("chart_src"), sql);
+        assertTrue(sql.contains("GROUP BY \"source_district\""), sql);
+        assertTrue(sql.contains("LIMIT 51"), sql);
+        assertFalse(sql.contains("LIMIT 10000"), sql);
+        assertEquals(1000L, summary.totalRows());
+        assertTrue(summary.truncated());
+        assertEquals(51, summary.buckets().size());
+        assertTrue(summary.buckets().get(50).other());
+        assertEquals(500L, summary.buckets().get(50).count());
+    }
+
+    @Test
+    void chartBucketsRejectsAColumnThatIsNotInTheResult() {
+        assertThrows(IllegalArgumentException.class,
+                () -> service.chartBuckets(exactMatchRequest(), List.of("not_a_column")));
+        verify(jdbc, never()).queryForList(anyString(), any(Object[].class));
+    }
+
+    @Test
+    void filteredEstimateCountsTheTableDirectly() {
+        lenient().doAnswer(inv -> {
+            QualifiedTable table = inv.getArgument(0);
+            if ("beneficiary".equals(table.table())) {
+                return ScopeFilteredFrom.filtered(table.qualifiedName(), "t.dob = ?", List.of("2000-01-01"));
+            }
+            return ScopeFilteredFrom.unfiltered(table.qualifiedName());
+        }).when(scopeFrom).planFrom(any());
+        lenient().when(jdbc.queryForObject(anyString(), any(Object[].class), eq(Long.class))).thenReturn(10L);
+        RecordMatchRequest req = new RecordMatchRequest(
+                List.of(exact("beneficiary", "m_id")),
+                List.of(exact("bank_txn", "m_id")),
+                null, null, List.of(), false, null, JoinType.INNER);
+        assertDoesNotThrow(() -> service.planMatch(req));
+        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+        verify(jdbc, atLeastOnce()).queryForObject(sql.capture(), any(Object[].class), eq(Long.class));
+        String counted = sql.getAllValues().stream().filter(s -> s.contains("count(*)")).findFirst().orElse("");
+        assertTrue(counted.contains("SELECT count(*) FROM " + qualified("beneficiary") + " t WHERE t.dob = ?"), counted);
+        assertFalse(counted.contains("SELECT *"), counted);
+    }
+
+    @Test
+    void catalogStatsAreReusedUntilTheyExpire() throws Exception {
+        stubCatalogStats("m_id", 20_000L, 200_000L);
+        RecordMatchRequest req = new RecordMatchRequest(
+                List.of(exact("beneficiary", "m_id")),
+                List.of(exact("bank_txn", "m_id")),
+                null, null, List.of(), false, null, JoinType.INNER);
+        assertDoesNotThrow(() -> service.planMatch(req));
+        verify(jdbc, times(2)).query(startsWith("SHOW STATS"), any(RowCallbackHandler.class));
+        assertDoesNotThrow(() -> service.planMatch(req));
+        verify(jdbc, times(2)).query(startsWith("SHOW STATS"), any(RowCallbackHandler.class));
+        verify(jdbc, never()).queryForObject(contains("count(*)"), eq(Long.class));
+        verify(jdbc, never()).queryForObject(contains("approx_distinct"), eq(Long.class));
     }
 }

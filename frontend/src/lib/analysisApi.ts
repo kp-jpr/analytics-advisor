@@ -479,6 +479,35 @@ export async function fetchComparisonSummary(
   return res.json() as Promise<ComparisonSummaryResponse>;
 }
 
+export type ChartBucket = {
+  values: string[];
+  count: number;
+  other: boolean;
+};
+
+export type ChartBucketsResponse = {
+  totalRows: number;
+  truncated: boolean;
+  buckets: ChartBucket[];
+};
+
+/** Full-result value counts for charts. The 10,000-row screen preview is not counted. */
+export async function fetchChartBuckets(
+  req: RecordMatchRequest,
+  columns: string[],
+): Promise<ChartBucketsResponse> {
+  const res = await authorizedFetch(`${API_BASE}/api/analysis/match/chart-buckets`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ match: req, columns }),
+  });
+  if (!res.ok) {
+    throw new Error(`Analysis service error ${res.status}: ${await readApiErrorMessage(res)}`);
+  }
+  return res.json() as Promise<ChartBucketsResponse>;
+}
+
 export type MatchExportFormat = "csv" | "json" | "xml" | "xlsx";
 
 const MATCH_EXPORT_PATH: Record<MatchExportFormat, string> = {

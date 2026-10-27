@@ -15,6 +15,7 @@ import {
 import { ChartsSection } from "@/components/ChartsSection";
 import { ResultTableToolbar } from "@/components/results/ResultTableToolbar";
 import { useShell } from "@/components/shell/ShellProviders";
+import { fetchChartBuckets, type RecordMatchRequest } from "@/lib/analysisApi";
 import {
   resetColumnVisibilityForSchema,
   visibleColumnIds,
@@ -105,6 +106,8 @@ export type AnalysisResultsGridProps = Readonly<{
   appearance?: "legacy" | "prototype";
   /** Hide charts section (e.g. dashboard already charts above). */
   showCharts?: boolean;
+  /** When set, charts count the full match instead of the rows on screen. */
+  chartRequest?: RecordMatchRequest | null;
   /** When true, CSV/Excel use the backend match export (UI sort does not apply). */
   serverExportAvailable?: boolean;
 }>;
@@ -203,6 +206,7 @@ export function AnalysisResultsGrid({
   fullCsvDownloadNote,
   appearance = "legacy",
   showCharts = true,
+  chartRequest = null,
   serverExportAvailable = Boolean(onDownloadFullExport || onDownloadFullCsv),
 }: AnalysisResultsGridProps) {
   const { t } = useShell();
@@ -221,6 +225,7 @@ export function AnalysisResultsGrid({
   const [hiddenColumnIds, setHiddenColumnIds] = useState<string[]>([]);
   const [showSql, setShowSql] = useState(true);
   const [exportBusy, setExportBusy] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const columnsKey = columns.join("\u0001");
   useEffect(() => {
@@ -310,11 +315,17 @@ export function AnalysisResultsGrid({
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [rows, sorting, columnFilters, hiddenColumnIds, columnsKey]);
 
+  const loadChartBuckets = useMemo(() => {
+    if (!chartRequest) return undefined;
+    return (columns: string[]) => fetchChartBuckets(chartRequest, columns);
+  }, [chartRequest]);
+
   const exportUsesServer = serverExportAvailable && Boolean(onDownloadFullExport || onDownloadFullCsv);
 
   async function handleExport(format: "csv" | "xlsx" | "json" | "xml") {
     if (streaming) return;
     setExportBusy(true);
+    setExportError(null);
     try {
       if (onDownloadFullExport) {
         await onDownloadFullExport(format);
@@ -324,10 +335,17 @@ export function AnalysisResultsGrid({
         await onDownloadFullCsv();
         return;
       }
-      if (format === "csv" || format === "xlsx") {
+      if ((format === "csv" || format === "xlsx") && !tooManyToDisplay) {
         await exportBufferedAnalyticalResult(format, columns, rows, labelFor);
         return;
       }
+      if (tooManyToDisplay) {
+        throw new Error(
+          "Run the query again to download every row. This screen only kept the first 10,000.",
+        );
+      }
+    } catch (err: unknown) {
+      setExportError(err instanceof Error ? err.message : String(err));
     } finally {
       setExportBusy(false);
     }
@@ -426,6 +444,9 @@ export function AnalysisResultsGrid({
                   dedupControl={dedupControl}
                   t={t}
                 />
+                {exportError && (
+                  <p className="srse-query-notice" role="status">{exportError}</p>
+                )}
 
                 <div className={proto ? "results-scroll result-table-scroll" : "result-table-scroll"} style={proto ? undefined : { overflowX: "auto" }}>
                   <table className={proto ? "data-table result-data-table" : "srse-table result-data-table"}>
@@ -524,13 +545,14 @@ export function AnalysisResultsGrid({
         </div>
       </section>
 
-      {showCharts && rows.length > 0 && !tooManyToDisplay && (
+      {showCharts && rows.length > 0 && (chartRequest || !tooManyToDisplay) && (
         <div style={{ marginTop: "1.5rem" }}>
           <ChartsSection
             rows={rows}
             dimensions={columns.map((c) => ({ key: c, label: labelFor(c) }))}
-            getValue={(row, key) => String(row[key])}
+            getValue={(row, key) => String(row[key] ?? "")}
             getCount={() => 1}
+            loadBuckets={loadChartBuckets}
           />
         </div>
       )}

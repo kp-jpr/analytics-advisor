@@ -75,6 +75,35 @@ public record RecordMatchRequest(
     }
 
     /**
+     * The same match with no extract row cap and no count-only wrapper.
+     * Screen preview and count-only stay on the run request; export and charts use this shape.
+     */
+    public RecordMatchRequest forFullResult() {
+        if (resultLimit == null && !Boolean.TRUE.equals(countOnly)) {
+            return this;
+        }
+        return new RecordMatchRequest(
+                sourceCriteria,
+                targetCriteria,
+                sourceDisplayColumns,
+                targetDisplayColumns,
+                joinGroups,
+                highlightDuplicates,
+                dedup,
+                joinType,
+                comparisonGroups,
+                mismatchOnly,
+                sourceRules,
+                targetRules,
+                singleSource,
+                groupByColumns,
+                aggregates,
+                null,
+                false,
+                additionalJoins);
+    }
+
+    /**
      * The pre-groups shape: two criteria lists paired positionally. Equivalent
      * to passing no groups at all, which is what makes the SQL identical.
      */

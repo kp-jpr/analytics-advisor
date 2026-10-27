@@ -811,6 +811,7 @@ export default function ReportAnalysisTab({
   // True when we stopped reading before the stream finished naturally, so
   // matchTotalRows (if set at all) is a lower bound, not an exact count.
   const [matchCountIsPartial, setMatchCountIsPartial] = useState(false);
+  const [chartRequest, setChartRequest] = useState<RecordMatchRequest | null>(null);
   // True for the whole streaming lifecycle (first byte to last), not just the
   // initial network round trip — drives the grid's "(loading more…)" caption
   // and disables CSV/column-visibility until the result is actually complete.
@@ -835,7 +836,9 @@ export default function ReportAnalysisTab({
       rows: matchRows,
       totalRows: matchTotalRows,
       source: "report",
-      matchExportRequest: lastRunRequestRef.current,
+      matchExportRequest: lastRunRequestRef.current
+        ? withoutCountOnly(lastRunRequestRef.current)
+        : null,
     });
     onRunComplete?.();
   }, [embedded, matchStatus, matchColumns, matchRows, matchTotalRows, setLastResult, onRunComplete]);
@@ -958,6 +961,7 @@ export default function ReportAnalysisTab({
       setMatchTotalRows(extractResult.totalRows);
       setMatchStatus("ok");
       lastRunRequestRef.current = lastAppliedRequest;
+      setChartRequest(lastAppliedRequest ? withoutCountOnly(lastAppliedRequest) : null);
       streamColumnsRef.current = extractResult.columns;
       carriedRowsRef.current = extractResult.rows;
       lastStreamSqlRef.current = extractResult.sql;
@@ -1463,6 +1467,7 @@ export default function ReportAnalysisTab({
     setMatchTotalRows(null);
     setMatchCountIsPartial(false);
     setMatchTooManyToDisplay(false);
+    setChartRequest(null);
     setComparisonSummary(null);
     setComparisonSummaryError(null);
     setCountOnlyResult(null);
@@ -1741,6 +1746,9 @@ export default function ReportAnalysisTab({
       }
     } finally {
       finishStreamFlush();
+      if (streamSucceeded && req && !req.countOnly && !multiMatchMode) {
+        setChartRequest(withoutCountOnly(req));
+      }
       if (embedded && streamSucceeded && req) {
         const snapshot = {
           columns: streamColumnsRef.current,
@@ -3054,6 +3062,7 @@ export default function ReportAnalysisTab({
                 : undefined
             }
             columnLabels={buildColumnLabels()}
+            chartRequest={multiMatchMode ? null : chartRequest}
             onDedupToggle={(enabled) => {
               setDedupEnabled(enabled);
               patchPipelineReport({ dedupEnabled: enabled });

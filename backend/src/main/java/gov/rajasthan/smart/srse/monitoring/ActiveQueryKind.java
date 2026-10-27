@@ -5,6 +5,7 @@ public enum ActiveQueryKind {
     MULTI_MATCH,
     COLUMN_VALUES,
     COMPARISON_SUMMARY,
+    CHART_BUCKETS,
     EXPORT,
     ESTIMATE,
     SUGGEST_KEYS

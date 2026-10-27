@@ -49,6 +49,12 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.StringJoiner;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /**
  * Cross-table fuzzy/exact record matching for the Analysis tab.
@@ -115,6 +121,13 @@ public class RecordMatchService {
     private static final Logger log = LoggerFactory.getLogger(RecordMatchService.class);
 
     private static final int MAX_CRITERIA_PER_SIDE = 8;
+    private static final long CATALOG_STATS_TTL_MS = 10L * 60L * 1000L;
+    /** Independent SHOW STATS and count queries share this pool. Daemon threads so tests can exit. */
+    private static final ExecutorService ESTIMATE_POOL = Executors.newFixedThreadPool(4, runnable -> {
+        Thread thread = new Thread(runnable, "srse-match-estimate");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     private final JdbcTemplate jdbc;
     private final LakehouseRegistryService registry;
@@ -130,6 +143,8 @@ public class RecordMatchService {
 
     @Autowired(required = false)
     private gov.rajasthan.smart.srse.monitoring.QueryExecutionMonitor queryMonitor;
+
+    private final ConcurrentHashMap<String, CachedCatalogStats> catalogStatsCache = new ConcurrentHashMap<>();
 
     public RecordMatchService(@Qualifier("prestoJdbcTemplate") JdbcTemplate jdbc,
                               LakehouseRegistryService registry,
@@ -372,6 +387,108 @@ public class RecordMatchService {
                     i, comparisonLabel(g), matches, rate));
         }
         return new ComparisonSummaryResponse(total, matched, noCounterpart, List.copyOf(columns));
+    }
+
+    /** How many categories a chart draws. One extra group is read so the rest can fold into Other. */
+    public static final int CHART_CATEGORY_CAP = 50;
+
+    /**
+     * Counts every matching row, grouped by the requested output columns.
+     * Returns at most {@link #CHART_CATEGORY_CAP} groups plus an Other bucket for the rest.
+     */
+    public ChartBucketsResponse chartBuckets(RecordMatchRequest req, List<String> columns) {
+        return chartBuckets(planMatch(req.forFullResult()), columns);
+    }
+
+    public ChartBucketsResponse chartBuckets(MatchQuery query, List<String> columns) {
+        List<String> grouped = validateChartColumns(query, columns);
+        String sql = chartBucketSql(query.routedSql(), grouped);
+        if (executionRouter != null) {
+            sql = executionRouter.adaptChartWrapper(sql, query.route());
+        }
+        List<Map<String, Object>> rows = jdbcFor(query).queryForList(sql, query.params().toArray());
+        if (rows.isEmpty()) {
+            return new ChartBucketsResponse(0, false, List.of());
+        }
+        long total = toLong(cell(rows.get(0), "total_rows"));
+        boolean truncated = rows.size() > CHART_CATEGORY_CAP;
+        int kept = truncated ? CHART_CATEGORY_CAP : rows.size();
+        List<ChartBucketsResponse.ChartBucket> buckets = new ArrayList<>();
+        long keptSum = 0;
+        for (int i = 0; i < kept; i++) {
+            Map<String, Object> row = rows.get(i);
+            List<String> values = new ArrayList<>();
+            for (int c = 0; c < grouped.size(); c++) {
+                values.add(cellText(cell(row, "c" + c)));
+            }
+            long count = toLong(cell(row, "bucket_count"));
+            keptSum += count;
+            buckets.add(new ChartBucketsResponse.ChartBucket(List.copyOf(values), count, false));
+        }
+        if (truncated) {
+            long other = Math.max(0, total - keptSum);
+            buckets.add(new ChartBucketsResponse.ChartBucket(List.of(), other, true));
+        }
+        return new ChartBucketsResponse(total, truncated, List.copyOf(buckets));
+    }
+
+    private static List<String> validateChartColumns(MatchQuery query, List<String> columns) {
+        if (columns == null || columns.isEmpty()) {
+            throw new IllegalArgumentException("chart columns are required");
+        }
+        if (columns.size() > 5) {
+            throw new IllegalArgumentException("chart columns must have 1 to 5 entries");
+        }
+        List<String> output = query.columns();
+        List<String> grouped = new ArrayList<>();
+        for (String column : columns) {
+            if (column == null || !output.contains(column) || !column.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+                throw new IllegalArgumentException("chart column is not in the match result: " + column);
+            }
+            grouped.add(column);
+        }
+        return List.copyOf(grouped);
+    }
+
+    static String chartBucketSql(String matchSql, List<String> columns) {
+        StringBuilder select = new StringBuilder("SELECT ");
+        StringBuilder groupBy = new StringBuilder("GROUP BY ");
+        for (int i = 0; i < columns.size(); i++) {
+            if (i > 0) {
+                select.append(", ");
+                groupBy.append(", ");
+            }
+            String quoted = "\"" + columns.get(i) + "\"";
+            select.append(quoted).append(" AS \"c").append(i).append("\"");
+            groupBy.append(quoted);
+        }
+        select.append(", COUNT(*) AS bucket_count, SUM(COUNT(*)) OVER () AS total_rows FROM (")
+                .append(matchSql)
+                .append(") chart_src ")
+                .append(groupBy)
+                .append(" ORDER BY bucket_count DESC LIMIT ")
+                .append(CHART_CATEGORY_CAP + 1);
+        return select.toString();
+    }
+
+    private static Object cell(Map<String, Object> row, String key) {
+        if (row.containsKey(key)) {
+            return row.get(key);
+        }
+        for (Map.Entry<String, Object> entry : row.entrySet()) {
+            if (entry.getKey() != null && entry.getKey().equalsIgnoreCase(key)) {
+                return entry.getValue();
+            }
+        }
+        return null;
+    }
+
+    private static String cellText(Object value) {
+        if (value == null) {
+            return "(blank)";
+        }
+        String text = String.valueOf(value);
+        return text.isEmpty() ? "(blank)" : text;
     }
 
     private static long toLong(Object value) {
@@ -1662,16 +1779,30 @@ public class RecordMatchService {
         if (ceiling <= 0 || groups.isEmpty()) {
             return;
         }
-        TableStats sourceStats = sourceScope.appliesFilter() ? TableStats.EMPTY : readCatalogStats(sides.sourceTable());
-        TableStats targetStats = targetScope.appliesFilter() ? TableStats.EMPTY : readCatalogStats(sides.targetTable());
-        long sourceRows = sourceScope.appliesFilter()
-                ? queryScopedRowCount(sourceScope, sides.sourceTable())
-                : (sourceStats.rowCount() != null
-                        ? sourceStats.rowCount() : queryRowCount(sides.sourceTable()));
-        long targetRows = targetScope.appliesFilter()
-                ? queryScopedRowCount(targetScope, sides.targetTable())
-                : (targetStats.rowCount() != null
-                        ? targetStats.rowCount() : queryRowCount(sides.targetTable()));
+        List<Callable<TableStats>> statTasks = new ArrayList<>();
+        statTasks.add(() -> sourceScope.appliesFilter() ? TableStats.EMPTY : readCatalogStats(sides.sourceTable()));
+        statTasks.add(() -> targetScope.appliesFilter() ? TableStats.EMPTY : readCatalogStats(sides.targetTable()));
+        for (int i = 0; i < additionalJoins.size(); i++) {
+            ScopeFilteredFrom extraScope = extraScopes.get(i);
+            QualifiedTable extraTable = additionalJoins.get(i).qualifiedTable();
+            statTasks.add(() -> extraScope.appliesFilter() ? TableStats.EMPTY : readCatalogStats(extraTable));
+        }
+        List<TableStats> stats = invokeEstimate(statTasks);
+        TableStats sourceStats = stats.get(0);
+        TableStats targetStats = stats.get(1);
+
+        List<Callable<Long>> rowTasks = new ArrayList<>();
+        rowTasks.add(() -> rowCountFor(sides.sourceTable(), sourceScope, sourceStats));
+        rowTasks.add(() -> rowCountFor(sides.targetTable(), targetScope, targetStats));
+        for (int i = 0; i < additionalJoins.size(); i++) {
+            QualifiedTable extraTable = additionalJoins.get(i).qualifiedTable();
+            ScopeFilteredFrom extraScope = extraScopes.get(i);
+            TableStats extraStats = stats.get(i + 2);
+            rowTasks.add(() -> rowCountFor(extraTable, extraScope, extraStats));
+        }
+        List<Long> rowCounts = invokeEstimate(rowTasks);
+        long sourceRows = rowCounts.get(0);
+        long targetRows = rowCounts.get(1);
         if (sourceRows == 0 || targetRows == 0) {
             return;
         }
@@ -1679,15 +1810,19 @@ public class RecordMatchService {
         if (numerator <= 0) {
             return;
         }
-        long denominator = 1;
+        List<Callable<Long>> distinctTasks = new ArrayList<>();
         for (GroupPlan group : groups) {
-            long sourceDistinct = sideDistinctEstimate(
+            distinctTasks.add(() -> sideDistinctEstimate(
                     sides.sourceTable(), sourceScope, group.group().source(), group.fuzzy(),
-                    group.group().fuzzyOptions(), sourceStats, sides.sourceColumns());
-            long targetDistinct = sideDistinctEstimate(
+                    group.group().fuzzyOptions(), sourceStats, sides.sourceColumns()));
+            distinctTasks.add(() -> sideDistinctEstimate(
                     sides.targetTable(), targetScope, group.group().target(), group.fuzzy(),
-                    group.group().fuzzyOptions(), targetStats, sides.targetColumns());
-            long groupMax = Math.max(sourceDistinct, targetDistinct);
+                    group.group().fuzzyOptions(), targetStats, sides.targetColumns()));
+        }
+        List<Long> groupDistincts = invokeEstimate(distinctTasks);
+        long denominator = 1;
+        for (int i = 0; i < groups.size(); i++) {
+            long groupMax = Math.max(groupDistincts.get(i * 2), groupDistincts.get(i * 2 + 1));
             if (groupMax <= 0) {
                 return;
             }
@@ -1701,33 +1836,33 @@ public class RecordMatchService {
         List<ExtraFanOut> outerFactors = List.of();
         boolean anyOuter = false;
         if (!additionalJoins.isEmpty()) {
-            Map<String, Long> sourceDistinctByColumn = new java.util.HashMap<>();
-            outerFactors = new ArrayList<>(additionalJoins.size());
+            List<Callable<Long>> extraDistinctTasks = new ArrayList<>();
             for (int i = 0; i < additionalJoins.size(); i++) {
                 AdditionalJoin extra = additionalJoins.get(i);
                 ScopeFilteredFrom extraScope = extraScopes.get(i);
                 QualifiedTable extraTable = extra.qualifiedTable();
-                TableStats extraStats = extraScope.appliesFilter() ? TableStats.EMPTY : readCatalogStats(extraTable);
-                long extraRows = extraScope.appliesFilter()
-                        ? queryScopedRowCount(extraScope, extraTable)
-                        : (extraStats.rowCount() != null
-                                ? extraStats.rowCount() : queryRowCount(extraTable));
-                if (extraRows == 0) {
-                    return;
-                }
-                long sourceDistinct = sourceDistinctByColumn.computeIfAbsent(extra.sourceColumn(), column ->
-                        sideDistinctEstimate(
-                                sides.sourceTable(), sourceScope,
-                                List.of(new MatchCriterion(
-                                        sides.sourceTable().catalog(), sides.sourceTable().schema(),
-                                        sides.sourceTable().table(), column, null)),
-                                false, null, sourceStats, sides.sourceColumns()));
-                long extraDistinct = sideDistinctEstimate(
+                TableStats extraStats = stats.get(i + 2);
+                extraDistinctTasks.add(() -> sideDistinctEstimate(
+                        sides.sourceTable(), sourceScope,
+                        List.of(new MatchCriterion(
+                                sides.sourceTable().catalog(), sides.sourceTable().schema(),
+                                sides.sourceTable().table(), extra.sourceColumn(), null)),
+                        false, null, sourceStats, sides.sourceColumns()));
+                extraDistinctTasks.add(() -> sideDistinctEstimate(
                         extraTable, extraScope,
                         List.of(new MatchCriterion(
                                 extra.catalog(), extra.schema(), extra.table(), extra.joinColumn(), null)),
-                        false, null, extraStats, Map.of());
-                long groupMax = Math.max(sourceDistinct, extraDistinct);
+                        false, null, extraStats, Map.of()));
+            }
+            List<Long> extraDistincts = invokeEstimate(extraDistinctTasks);
+            outerFactors = new ArrayList<>(additionalJoins.size());
+            for (int i = 0; i < additionalJoins.size(); i++) {
+                AdditionalJoin extra = additionalJoins.get(i);
+                long extraRows = rowCounts.get(i + 2);
+                if (extraRows == 0) {
+                    return;
+                }
+                long groupMax = Math.max(extraDistincts.get(i * 2), extraDistincts.get(i * 2 + 1));
                 if (groupMax <= 0) {
                     return;
                 }
@@ -1827,6 +1962,32 @@ public class RecordMatchService {
         if (executionRouter != null && executionRouter.containsExternal(table)) {
             return TableStats.EMPTY;
         }
+        String key = table.qualifiedName();
+        long now = System.currentTimeMillis();
+        CachedCatalogStats cached = catalogStatsCache.get(key);
+        if (cached != null && cached.expiresAtMillis() > now) {
+            noteCatalogStats(cached.stats());
+            return cached.stats();
+        }
+        synchronized (catalogStatsCache) {
+            cached = catalogStatsCache.get(key);
+            now = System.currentTimeMillis();
+            if (cached != null && cached.expiresAtMillis() > now) {
+                noteCatalogStats(cached.stats());
+                return cached.stats();
+            }
+            TableStats loaded = loadCatalogStats(table);
+            if (loaded == null) {
+                return TableStats.EMPTY;
+            }
+            catalogStatsCache.put(key, new CachedCatalogStats(loaded, now + CATALOG_STATS_TTL_MS));
+            noteCatalogStats(loaded);
+            return loaded;
+        }
+    }
+
+    /** Null when SHOW STATS failed. An empty success is cached; a failure is not. */
+    private TableStats loadCatalogStats(QualifiedTable table) {
         Map<String, Long> distinct = new java.util.HashMap<>();
         long[] rowCount = {-1};
         try {
@@ -1837,7 +1998,6 @@ public class RecordMatchService {
                 double rows = rs.getDouble("row_count");
                 boolean rowsNull = rs.wasNull();
                 if (column == null && !rowsNull) {
-                    // the summary row carries the table's row count
                     rowCount[0] = (long) rows;
                 } else if (column != null && !distinctNull) {
                     distinct.put(column, (long) distinctValues);
@@ -1846,11 +2006,74 @@ public class RecordMatchService {
         } catch (RuntimeException ex) {
             log.debug("No usable catalog statistics for {} — falling back to live aggregates: {}",
                     table.qualifiedName(), ex.toString());
-            return TableStats.EMPTY;
+            return null;
         }
-        TableStats stats = new TableStats(rowCount[0] >= 0 ? rowCount[0] : null, Map.copyOf(distinct));
-        noteCatalogStats(stats);
-        return stats;
+        return new TableStats(rowCount[0] >= 0 ? rowCount[0] : null, Map.copyOf(distinct));
+    }
+
+    private record CachedCatalogStats(TableStats stats, long expiresAtMillis) {
+    }
+
+    private long rowCountFor(QualifiedTable table, ScopeFilteredFrom scope, TableStats stats) {
+        if (scope.appliesFilter()) {
+            return queryScopedRowCount(scope, table);
+        }
+        if (stats.rowCount() != null) {
+            return stats.rowCount();
+        }
+        return queryRowCount(table);
+    }
+
+    private <T> List<T> invokeEstimate(List<Callable<T>> tasks) {
+        if (tasks.isEmpty()) {
+            return List.of();
+        }
+        if (tasks.size() == 1) {
+            return List.of(callEstimate(tasks.get(0)));
+        }
+        PlanTrace trace = PLAN_TRACE.get();
+        List<Future<T>> futures = new ArrayList<>(tasks.size());
+        for (Callable<T> task : tasks) {
+            futures.add(ESTIMATE_POOL.submit(() -> {
+                if (trace != null) {
+                    PLAN_TRACE.set(trace);
+                }
+                try {
+                    return task.call();
+                } finally {
+                    PLAN_TRACE.remove();
+                }
+            }));
+        }
+        List<T> results = new ArrayList<>(futures.size());
+        for (Future<T> future : futures) {
+            try {
+                results.add(future.get());
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Match estimate interrupted", ex);
+            } catch (ExecutionException ex) {
+                Throwable cause = ex.getCause();
+                if (cause instanceof RuntimeException runtime) {
+                    throw runtime;
+                }
+                if (cause instanceof Error error) {
+                    throw error;
+                }
+                throw new IllegalStateException(cause);
+            }
+        }
+        return results;
+    }
+
+    private static <T> T callEstimate(Callable<T> task) {
+        try {
+            return task.call();
+        } catch (RuntimeException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new IllegalStateException(ex);
+        }
     }
 
     /** One plan's estimate path. Consumed by the execute log so planning itself adds no query. */
@@ -1944,8 +2167,7 @@ public class RecordMatchService {
             return 0;
         }
         noteLiveCount();
-        String sql = "SELECT count(*) FROM (SELECT * FROM " + scope.qualifiedName() + " t WHERE "
-                + scope.whereSql() + ")";
+        String sql = "SELECT count(*) FROM " + scope.qualifiedName() + " t WHERE " + scope.whereSql();
         Long count = queryLong(sql, scope.bindValues(), table);
         return count == null ? 0 : Math.max(0, count);
     }
@@ -1963,13 +2185,10 @@ public class RecordMatchService {
         }
         long product = 1;
         long ceiling = analysisProperties.maxEstimatedRows();
-        String fromExpr = scope.appliesFilter() ? scopedFromSubquery(scope) : table.qualifiedName();
-        // Qualify columns by the derived table's ALIAS when scoped. Using the
-        // FROM expression itself yields "(SELECT ... WHERE col IN (?)).column",
-        // which embeds the subquery a second time — so the statement carries two
-        // placeholders while only one value is bound, and Presto rejects the
-        // whole query. Every scoped match failed this way before it was caught.
-        String columnQualifier = scope.appliesFilter() ? SCOPED_FROM_ALIAS : table.qualifiedName();
+        String columnQualifier = scope.appliesFilter() ? "t" : table.qualifiedName();
+        String fromExpr = scope.appliesFilter()
+                ? scope.qualifiedName() + " t WHERE " + scope.whereSql()
+                : table.qualifiedName();
         for (MatchCriterion c : columns) {
             // A fuzzy group joins on the blocking-key EXPRESSION, and no catalog
             // statistic describes substr(lower(col), 1, n) — that one is always
@@ -1989,14 +2208,6 @@ public class RecordMatchService {
             product = multiplyCap(product, distinct, ceiling);
         }
         return product;
-    }
-
-    /** Alias for the scope-filtered derived table, so its columns can be referenced. */
-    private static final String SCOPED_FROM_ALIAS = "scoped_src";
-
-    private static String scopedFromSubquery(ScopeFilteredFrom scope) {
-        return "(SELECT * FROM " + scope.qualifiedName() + " t WHERE " + scope.whereSql() + ") "
-                + SCOPED_FROM_ALIAS;
     }
 
     private long queryApproxDistinct(

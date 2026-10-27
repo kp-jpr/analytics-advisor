@@ -160,6 +160,18 @@ public class RecordMatchController {
                 () -> matchService.comparisonSummary(audited.query(), req));
     }
 
+    /** Value counts over the full match, for charts. Ignores the on-screen row cap. */
+    @PostMapping("/match/chart-buckets")
+    public ChartBucketsResponse chartBuckets(@RequestBody ChartBucketsRequest req) throws Exception {
+        if (req.match() == null) {
+            throw new IllegalArgumentException("match is required");
+        }
+        AuditedMatchQuery audited = analysisAuditService.planMatchAudited(req.match().forFullResult());
+        return queryMonitor.track(
+                audited.ticket().withKind(ActiveQueryKind.CHART_BUCKETS),
+                () -> matchService.chartBuckets(audited.query(), req.columns()));
+    }
+
     /**
      * Join-key hints for two registered tables — metadata-only by default;
      * optional bounded overlap probe when {@code probe: true}.

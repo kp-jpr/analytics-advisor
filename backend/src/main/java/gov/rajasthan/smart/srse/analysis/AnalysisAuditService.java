@@ -46,7 +46,9 @@ public class AnalysisAuditService {
 
     public RecordMatchService.MatchQuery planPreviewAudited(RecordMatchRequest req) {
         try {
-            RecordMatchService.MatchQuery query = matchService.planMatch(req);
+            // Showing SQL while the officer builds the query must not count lakehouse rows.
+            // Run still uses planMatch and still applies the 50 million row ceiling.
+            RecordMatchService.MatchQuery query = matchService.planMatchForSave(req);
             auditCapture.recordBestEffort(new AuditEventDraft(
                     AuditActionType.QUERY_PREVIEWED,
                     AuditOutcome.SUCCESS,

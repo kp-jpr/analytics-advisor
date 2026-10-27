@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { RuleOperator } from "@/lib/analysisApi";
 import { translate } from "@/lib/i18n/catalog";
 import {
+  buildExtractExportRequest,
   buildExtractRequest,
   buildMergedRequest,
   clearDisplayColumnSelection,
@@ -259,6 +260,17 @@ describe("ordinary source rules", () => {
     expect(counted.countOnly).toBe(true);
     const exported = withoutCountOnly(counted);
     expect(exported.countOnly).toBeUndefined();
+  });
+
+  it("strips the extract result limit so CSV and Excel are not the on-screen cap", () => {
+    const limited = buildExtractRequest(true, extract({ resultLimit: 10_000 }))!;
+    expect(limited.resultLimit).toBe(10_000);
+    const exported = withoutCountOnly(limited);
+    expect(exported.resultLimit).toBeUndefined();
+    expect(exported.countOnly).toBeUndefined();
+    const fromExportBuilder = buildExtractExportRequest(true, extract({ resultLimit: 10_000, countOnly: true }));
+    expect(fromExportBuilder?.resultLimit).toBeUndefined();
+    expect(fromExportBuilder?.countOnly).toBeUndefined();
   });
 
   it("does not send countOnly when group-by is on", () => {

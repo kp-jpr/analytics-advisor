@@ -102,6 +102,31 @@ public class AnalysisExecutionRouter {
         return presto;
     }
 
+    /**
+     * The chart wrapper is built after the match SQL is already routed.
+     * Only the outer limit and identifier quotes change for a direct database.
+     */
+    public String adaptChartWrapper(String sql, AnalysisExecutionRoute route) {
+        if (route == null || route.mode() != AnalysisExecutionRoute.Mode.DIRECT_JDBC
+                || route.externalDataSourceId() == null) {
+            return sql;
+        }
+        ExternalDataSource source = externalSources.requireActiveInternal(route.externalDataSourceId());
+        String adapted = sql;
+        if (source.getDatabaseType() == ExternalDataSourceType.MYSQL
+                || source.getDatabaseType() == ExternalDataSourceType.MARIADB) {
+            adapted = adapted.replace('"', '`');
+        }
+        if (source.getDatabaseType() == ExternalDataSourceType.DB2
+                || source.getDatabaseType() == ExternalDataSourceType.ORACLE) {
+            adapted = adapted.replaceAll("(?i)\\s+LIMIT\\s+(\\d+)\\s*$", " FETCH FIRST $1 ROWS ONLY");
+        }
+        if (source.getDatabaseType() == ExternalDataSourceType.SQLSERVER) {
+            adapted = applySqlServerLimit(adapted);
+        }
+        return adapted;
+    }
+
     public boolean containsExternal(QualifiedTable... tables) {
         for (QualifiedTable table : tables) {
             if (registration(table).isExternal()) return true;
