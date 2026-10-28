@@ -98,7 +98,6 @@ export default function DashboardPage() {
             <div className="stat">
               <div className="num">
                 {(lastResult.totalRows ?? lastResult.rows.length).toLocaleString()}
-                {countIsPartial ? "+" : ""}
               </div>
               <div className="lbl">{t("statResultRows")}</div>
             </div>

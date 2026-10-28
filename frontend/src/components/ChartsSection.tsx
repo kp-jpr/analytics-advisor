@@ -539,7 +539,7 @@ export function ChartsSection<T>({
           {title}
         </h2>
         <div style={{ display: "flex", gap: "0.4rem" }}>
-          {(["bar", "pie", "intersection"] as const).map((t) => (
+          {(["bar", "pie"] as const).map((t) => (
             <button
               key={t}
               type="button"
