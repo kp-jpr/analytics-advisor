@@ -185,4 +185,53 @@ describe("Query builder save and open", () => {
     expect(extract.displayCols).toEqual(["district"]);
     expect(document.body.textContent).toContain("Loaded “Village match”");
   });
+
+  it("shows a loader while a saved query is opening and hides it when loaded", async () => {
+    listSavedQueries.mockResolvedValue([savedSummary("Village match")]);
+    let resolveQuery: (value: unknown) => void = () => undefined;
+    getSavedQuery.mockReturnValue(
+      new Promise((resolve) => {
+        resolveQuery = resolve;
+      }),
+    );
+    await renderBar();
+
+    const select = document.querySelector("select") as HTMLSelectElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value")?.set;
+      setter?.call(select, "7");
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    expect(document.body.textContent).toContain("Loading saved query…");
+    expect(select.disabled).toBe(true);
+    expect(select.getAttribute("aria-busy")).toBe("true");
+    expect(document.querySelector(".srse-inline-spinner")).toBeTruthy();
+
+    await act(async () => {
+      resolveQuery({
+        ...savedSummary("Village match"),
+        createdAt: "2026-10-27T00:00:00Z",
+        request: {
+          sourceCriteria: [
+            { catalog: "iceberg", schema: "srse", table: "beneficiary", column: "m_id", fuzzyThresholdPercent: null },
+          ],
+          targetCriteria: [
+            { catalog: "iceberg", schema: "srse", table: "bank_txn", column: "m_id", fuzzyThresholdPercent: null },
+          ],
+          sourceDisplayColumns: [
+            { catalog: "iceberg", schema: "srse", table: "beneficiary", column: "district" },
+          ],
+          targetDisplayColumns: [],
+          singleSource: false,
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).not.toContain("Loading saved query…");
+    expect(document.body.textContent).toContain("Loaded “Village match”");
+    expect(select.disabled).toBe(false);
+  });
 });

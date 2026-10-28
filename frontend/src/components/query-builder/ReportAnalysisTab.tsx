@@ -725,6 +725,7 @@ export default function ReportAnalysisTab({
   const [savedQueries, setSavedQueries] = useState<SavedQuerySummary[]>([]);
   const [saveQueryName, setSaveQueryName] = useState("");
   const [openSavedId, setOpenSavedId] = useState("");
+  const [openingSaved, setOpeningSaved] = useState(false);
   const [savedQueryNotice, setSavedQueryNotice] = useState<{
     tone: "saved" | "info" | "error";
     text: string;
@@ -2108,11 +2109,14 @@ export default function ReportAnalysisTab({
           <select
             className="srse-input"
             aria-label="Open saved query"
+            aria-busy={openingSaved}
+            disabled={openingSaved}
             value={openSavedId}
             onChange={async (e) => {
               const id = Number(e.target.value);
               setOpenSavedId("");
-              if (!id) return;
+              if (!id || openingSaved) return;
+              setOpeningSaved(true);
               try {
                 await openSavedQuery(id);
               } catch (err: unknown) {
@@ -2121,6 +2125,8 @@ export default function ReportAnalysisTab({
                   tone: "error",
                   text: presentQueryError(raw, t("msgAnalyticalEngineDown")),
                 });
+              } finally {
+                setOpeningSaved(false);
               }
             }}
           >
@@ -2132,6 +2138,12 @@ export default function ReportAnalysisTab({
               </option>
             ))}
           </select>
+          {openingSaved ? (
+            <span className="srse-inline-loader" role="status">
+              <span className="srse-inline-spinner" aria-hidden="true" />
+              Loading saved query…
+            </span>
+          ) : null}
         </div>
         {savedQueryNotice?.tone === "saved" && (
           <p className="srse-save-banner" role="status">

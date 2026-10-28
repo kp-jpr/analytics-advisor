@@ -5,7 +5,7 @@ import Link from "next/link";
 import { AnalysisResultsGrid } from "@/components/AnalysisResultsGrid";
 import { useShell } from "@/components/shell/ShellProviders";
 import { downloadRecordMatchExport, type MatchExportFormat } from "@/lib/analysisApi";
-import { attributeNullCounts } from "@/lib/attributeNullCounts";
+import { visibleAttributeNullCounts } from "@/lib/attributeNullCounts";
 import { bufferedExportAllowed, resultPreviewIsTruncated } from "@/lib/fullResultExport";
 import { useQueryResultsStore } from "@/lib/queryResultsStore";
 import { defaultExportFilename, exportBufferedAnalyticalResult, triggerBlobDownload } from "@/lib/resultTableExport";
@@ -40,7 +40,7 @@ export default function DashboardPage() {
 
   const nullByAttribute = useMemo(() => {
     if (!lastResult?.rows.length) return [];
-    return attributeNullCounts(lastResult.columns, lastResult.rows);
+    return visibleAttributeNullCounts(lastResult.columns, lastResult.rows);
   }, [lastResult]);
 
   const onFullRowCount = useCallback((totalRows: number) => {
@@ -125,7 +125,7 @@ export default function DashboardPage() {
               );
             })}
           </div>
-          {truncated || countIsPartial ? (
+          {(truncated || countIsPartial) && nullByAttribute.length > 0 ? (
             <p className="srse-query-notice" role="status" style={{ marginTop: 0 }}>
               {t("dashNullShownNote")}
             </p>

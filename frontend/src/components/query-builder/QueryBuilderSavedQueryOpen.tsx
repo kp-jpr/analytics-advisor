@@ -30,6 +30,7 @@ export function QueryBuilderSavedQueryOpen({ onLoaded }: { onLoaded: () => void 
   const [name, setName] = useState("");
   const [openId, setOpenId] = useState("");
   const [saving, setSaving] = useState(false);
+  const [opening, setOpening] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(() => {
     const queued = takeQueuedInfo();
     return queued ? { tone: "info", text: queued } : null;
@@ -103,12 +104,15 @@ export function QueryBuilderSavedQueryOpen({ onLoaded }: { onLoaded: () => void 
         <select
           className="srse-input"
           aria-label="Open saved query"
+          aria-busy={opening}
+          disabled={opening}
           value={openId}
           onChange={(e) => {
             const id = Number(e.target.value);
             setOpenId("");
-            if (!id) return;
+            if (!id || opening) return;
             void (async () => {
+              setOpening(true);
               try {
                 const detail = await getSavedQuery(id);
                 const dual = dualModeFromRequest(detail.request);
@@ -121,6 +125,8 @@ export function QueryBuilderSavedQueryOpen({ onLoaded }: { onLoaded: () => void 
               } catch (err: unknown) {
                 const raw = err instanceof Error ? err.message : String(err);
                 setNotice({ tone: "error", text: presentQueryError(raw, t("msgAnalyticalEngineDown")) });
+              } finally {
+                setOpening(false);
               }
             })();
           }}
@@ -133,6 +139,12 @@ export function QueryBuilderSavedQueryOpen({ onLoaded }: { onLoaded: () => void 
             </option>
           ))}
         </select>
+        {opening ? (
+          <span className="srse-inline-loader" role="status">
+            <span className="srse-inline-spinner" aria-hidden="true" />
+            Loading saved query…
+          </span>
+        ) : null}
       </div>
       {notice?.tone === "saved" && (
         <p className="srse-save-banner" role="status">

@@ -1525,6 +1525,21 @@ tr:hover td { background: var(--bg-surface); }
     opacity: 1;
   }
 }
+.srse-inline-loader {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+.srse-inline-spinner {
+  width: 0.9rem;
+  height: 0.9rem;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--primary);
+  animation: pulse 1.2s ease-in-out infinite;
+}
 
 .admin-standalone-shell {
   --srse-bg: var(--bg-app);

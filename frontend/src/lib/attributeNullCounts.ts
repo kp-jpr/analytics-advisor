@@ -22,3 +22,11 @@ export function attributeNullCounts(
     return { column, nulls };
   });
 }
+
+/** Null KPI cards are shown only when a column has more than one null. */
+export function visibleAttributeNullCounts(
+  columns: string[],
+  rows: ReadonlyArray<Record<string, unknown>>,
+): AttributeNullCount[] {
+  return attributeNullCounts(columns, rows).filter((item) => item.nulls > 1);
+}
