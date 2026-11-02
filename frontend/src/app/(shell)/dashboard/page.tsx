@@ -3,6 +3,7 @@
 import { useCallback, useMemo } from "react";
 import Link from "next/link";
 import { AnalysisResultsGrid } from "@/components/AnalysisResultsGrid";
+import { ResultRowsCount } from "@/components/ResultRowsCount";
 import { useShell } from "@/components/shell/ShellProviders";
 import { downloadRecordMatchExport, type MatchExportFormat } from "@/lib/analysisApi";
 import { visibleAttributeNullCounts } from "@/lib/attributeNullCounts";
@@ -13,7 +14,6 @@ import { defaultExportFilename, exportBufferedAnalyticalResult, triggerBlobDownl
 export default function DashboardPage() {
   const { t } = useShell();
   const lastResult = useQueryResultsStore((s) => s.lastResult);
-  const applyFullRowCount = useQueryResultsStore((s) => s.applyFullRowCount);
   const truncated = resultPreviewIsTruncated(lastResult?.totalRows, lastResult?.rows.length ?? 0);
   const countIsPartial = Boolean(lastResult?.totalRowsIsPartial);
 
@@ -42,10 +42,6 @@ export default function DashboardPage() {
     if (!lastResult?.rows.length) return [];
     return visibleAttributeNullCounts(lastResult.columns, lastResult.rows);
   }, [lastResult]);
-
-  const onFullRowCount = useCallback((totalRows: number) => {
-    applyFullRowCount(totalRows);
-  }, [applyFullRowCount]);
 
   const downloadFullExport = useCallback(
     async (format: MatchExportFormat) => {
@@ -97,7 +93,12 @@ export default function DashboardPage() {
           <div className="stat-grid">
             <div className="stat">
               <div className="num">
-                {(lastResult.totalRows ?? lastResult.rows.length).toLocaleString()}
+                <ResultRowsCount
+                  key={lastResult.capturedAt}
+                  totalRows={lastResult.totalRows}
+                  shownRows={lastResult.rows.length}
+                  totalRowsIsPartial={countIsPartial}
+                />
               </div>
               <div className="lbl">{t("statResultRows")}</div>
             </div>
@@ -153,7 +154,6 @@ export default function DashboardPage() {
             chartPlacement="above"
             chartRequest={lastResult.matchExportRequest ?? null}
             columnLabels={lastResult.columnLabels}
-            onFullRowCount={onFullRowCount}
             onDownloadFullExport={downloadFullExport}
             serverExportAvailable={Boolean(lastResult.matchExportRequest)}
           />

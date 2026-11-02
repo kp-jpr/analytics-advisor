@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useEffect, useMemo, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -31,13 +31,7 @@ const MAX_INTERSECTION_DIMS = 5;
 // Separator for composite group-by keys — unlikely to appear in real data values.
 const KEY_SEP = "␟";
 
-// Analysis match results are no longer capped at 1000 rows, so a field can
-// have thousands of distinct values. Recharts renders one SVG bar/label (or
-// pie slice) per category with no virtualization — beyond a few dozen that
-// crashes the tab (confirmed live: an OOM "Error code: 5" renderer crash),
-// not just looks bad. Cap what actually gets rendered, always by count so
-// the most meaningful categories survive the cut, and say so when truncated.
-const MAX_CHART_CATEGORIES = 50;
+// Bar and pie charts draw every distinct value from the full match.
 // A plain HTML table row is far cheaper than an SVG bar, so this can be looser.
 const MAX_TABLE_ROWS = 200;
 // Matrix mode multiplies two axes into rowVals.length * colVals.length cells —
@@ -371,7 +365,6 @@ export function ChartsSection<T>({
   getCount,
   title = "Charts",
   loadBuckets,
-  onFullRowCount,
 }: ChartsSectionProps<T>) {
   const [chartType, setChartType] = useState<ChartType>("bar");
   const [singleDim, setSingleDim] = useState(dimensions[0]?.key ?? "");
@@ -379,15 +372,11 @@ export function ChartsSection<T>({
   const [intersectionDisplay, setIntersectionDisplay] = useState<IntersectionDisplay>("venn");
   const [vennValues, setVennValues] = useState<Record<string, string>>({});
   const [serverSingle, setServerSingle] = useState<AggEntry[] | null>(null);
-  const [serverSingleTruncated, setServerSingleTruncated] = useState(false);
   const [serverIntersection, setServerIntersection] = useState<FlatIntersection | null>(null);
-  const [serverIntersectionTruncated, setServerIntersectionTruncated] = useState(false);
   const [chartLoading, setChartLoading] = useState(false);
   const [chartNotice, setChartNotice] = useState<string | null>(null);
   const serverMode = Boolean(loadBuckets);
   const intersectionKey = intersectionDims.join("\u0001");
-  const onFullRowCountRef = useRef(onFullRowCount);
-  onFullRowCountRef.current = onFullRowCount;
 
   useEffect(() => {
     if (!loadBuckets) return undefined;
@@ -409,14 +398,14 @@ export function ChartsSection<T>({
               : bucket.values.map((value) => value || "(blank)"),
             count: bucket.count,
           }));
-          setServerIntersection({
-            kind: "flat",
-            combos,
-            truncated: false,
-            fullCount: combos.length,
+          startTransition(() => {
+            setServerIntersection({
+              kind: "flat",
+              combos,
+              truncated: false,
+              fullCount: combos.length,
+            });
           });
-          setServerIntersectionTruncated(payload.truncated);
-          onFullRowCountRef.current?.(payload.totalRows);
         })
         .catch((err: unknown) => {
           if (!cancelled) {
@@ -440,14 +429,13 @@ export function ChartsSection<T>({
     loadBuckets([singleDim])
       .then((payload) => {
         if (cancelled) return;
-        setServerSingle(
-          payload.buckets.map((bucket) => ({
-            value: bucket.other ? "Other" : bucket.values[0] || "(blank)",
-            count: bucket.count,
-          })),
-        );
-        setServerSingleTruncated(payload.truncated);
-        onFullRowCountRef.current?.(payload.totalRows);
+        const next = payload.buckets.map((bucket) => ({
+          value: bucket.other ? "Other" : bucket.values[0] || "(blank)",
+          count: bucket.count,
+        }));
+        startTransition(() => {
+          setServerSingle(next);
+        });
       })
       .catch((err: unknown) => {
         if (!cancelled) {
@@ -469,9 +457,6 @@ export function ChartsSection<T>({
     () => (serverMode ? (serverSingle ?? []) : aggregateSingleDim(rows, singleDim, getValue, getCount)),
     [serverMode, serverSingle, rows, singleDim, getValue, getCount],
   );
-  const singleAggTruncated = serverMode ? serverSingleTruncated : singleAggFull.length > MAX_CHART_CATEGORIES;
-  const singleAgg = serverMode || !singleAggTruncated ? singleAggFull : singleAggFull.slice(0, MAX_CHART_CATEGORIES);
-
   const intersection = useMemo(
     () => (serverMode ? serverIntersection : computeIntersection(rows, intersectionDims, getValue, getCount)),
     [serverMode, serverIntersection, rows, intersectionDims, getValue, getCount],
@@ -580,20 +565,13 @@ export function ChartsSection<T>({
             <p className="srse-text-muted" style={{ fontSize: "0.78rem" }}>Counting every matching row…</p>
           )}
 
-          {singleAggTruncated && (
-            <p className="srse-text-muted" style={{ fontSize: "0.78rem", marginTop: "-0.35rem", marginBottom: "0.6rem" }}>
-              {serverMode
-                ? `Counts include every matching row. Showing the top ${MAX_CHART_CATEGORIES} values by count. Remaining rows are in Other.`
-                : `Showing the top ${MAX_CHART_CATEGORIES} of ${singleAggFull.length} distinct values by count — pick a lower-cardinality field, or use the data grid / CSV export, to see the rest.`}
-            </p>
-          )}
-          {serverMode && !singleAggTruncated && !chartLoading && serverSingle && serverSingle.length > 0 && (
+          {serverMode && !chartLoading && serverSingle && serverSingle.length > 0 && (
             <p className="srse-text-muted" style={{ fontSize: "0.78rem", marginTop: "-0.35rem", marginBottom: "0.6rem" }}>
               Counts include every matching row.
             </p>
           )}
 
-          <SingleDimensionChart chartType={chartType} singleAgg={singleAgg} />
+          <SingleDimensionChart chartType={chartType} singleAgg={singleAggFull} />
         </div>
       )}
 
@@ -653,12 +631,6 @@ export function ChartsSection<T>({
                 </label>
               ))}
             </div>
-          )}
-
-          {serverMode && serverIntersectionTruncated && intersectionDims.length >= 2 && (
-            <p className="srse-text-muted" style={{ fontSize: "0.78rem", marginBottom: "0.6rem" }}>
-              Counts include every matching row. Showing the top {MAX_CHART_CATEGORIES} combinations by count. Remaining rows are in Other.
-            </p>
           )}
 
           <IntersectionContent
