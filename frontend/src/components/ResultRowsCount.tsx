@@ -1,64 +1,57 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useState } from "react";
+import type { RecordMatchRequest } from "@/lib/analysisApi";
 import {
-  RESULT_ROW_COUNT_MS,
-  RESULT_ROW_PREVIEW_FLOOR,
-  easedResultRowCount,
   exactResultRowTotal,
-  resultRowsNeedCountUp,
+  fetchExactMatchRowCount,
+  resultRowsNeedExactLoad,
 } from "@/lib/resultRowsCount";
 
 type ResultRowsCountProps = {
   totalRows: number | null | undefined;
   shownRows: number;
   totalRowsIsPartial: boolean;
+  matchRequest: RecordMatchRequest | null;
 };
 
 /**
- * Result Rows figure. The number is painted once, then adjusted on this node only.
- * Later totals from charts or a full count do not render the page again.
+ * Result Rows figure. A finished total is shown at once.
+ * A preview of 10,000 shows Loading until the exact full-match count arrives.
+ * That update stays in this card and does not render the rest of the page again.
  */
 export function ResultRowsCount({
   totalRows,
   shownRows,
   totalRowsIsPartial,
+  matchRequest,
 }: ResultRowsCountProps) {
-  const large = resultRowsNeedCountUp(totalRows, shownRows, totalRowsIsPartial);
-  const initial = large ? RESULT_ROW_PREVIEW_FLOOR : (totalRows ?? shownRows);
-  const nodeRef = useRef<HTMLSpanElement>(null);
+  const known = exactResultRowTotal(totalRows, totalRowsIsPartial);
+  const needsLoad = known == null && resultRowsNeedExactLoad(totalRows, shownRows, totalRowsIsPartial) && matchRequest != null;
+  const [exact, setExact] = useState<number | null>(known);
 
   useEffect(() => {
-    if (!large) return undefined;
-    const exact = exactResultRowTotal(totalRows, totalRowsIsPartial);
-    const node = nodeRef.current;
-    if (exact == null || !node) return undefined;
+    if (!needsLoad || !matchRequest) return undefined;
+    const controller = new AbortController();
     let cancelled = false;
-    let frame = 0;
-    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduceMotion) {
-      node.textContent = exact.toLocaleString();
-      return undefined;
-    }
-    const started = performance.now();
-    const tick = (now: number) => {
-      if (cancelled || !nodeRef.current) return;
-      const progress = (now - started) / RESULT_ROW_COUNT_MS;
-      nodeRef.current.textContent = easedResultRowCount(
-        RESULT_ROW_PREVIEW_FLOOR,
-        exact,
-        progress,
-      ).toLocaleString();
-      if (progress < 1) frame = requestAnimationFrame(tick);
-    };
-    frame = requestAnimationFrame(tick);
+    void fetchExactMatchRowCount(matchRequest, controller.signal)
+      .then((count) => {
+        if (cancelled) return;
+        setExact(count ?? totalRows ?? shownRows);
+      })
+      .catch(() => {
+        if (!cancelled) setExact(totalRows ?? shownRows);
+      });
     return () => {
       cancelled = true;
-      cancelAnimationFrame(frame);
+      controller.abort();
     };
-    // Keyed by the stored result. A later full count must not run this again.
+    // Keyed by the stored result. One count request, then the number stays in this card.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return <span ref={nodeRef}>{initial.toLocaleString()}</span>;
+  if (exact == null && needsLoad) {
+    return <span className="result-rows-loading">Loading.....</span>;
+  }
+  return <>{(exact ?? totalRows ?? shownRows).toLocaleString()}</>;
 }

@@ -1,23 +1,10 @@
-/** On-screen preview cap. A larger match counts up from this floor after paint. */
+import { runRecordMatchStream, type RecordMatchRequest } from "@/lib/analysisApi";
+import { rowCountFromMatchRow } from "@/lib/queryBuilderRequestBuild";
+
+/** On-screen preview cap. A larger match needs an exact count. */
 export const RESULT_ROW_PREVIEW_FLOOR = 10_000;
 
-/** Count-up duration. One eased step, not one tick per row. */
-export const RESULT_ROW_COUNT_MS = 400;
-
-/**
- * A match is larger than the preview when the stored total already is,
- * or when the screen is holding the 10,000-row preview and that total is still a lower bound.
- */
-export function resultRowsNeedCountUp(
-  totalRows: number | null | undefined,
-  shownRows: number,
-  totalRowsIsPartial: boolean,
-): boolean {
-  if (totalRows != null && totalRows > RESULT_ROW_PREVIEW_FLOOR) return true;
-  return shownRows >= RESULT_ROW_PREVIEW_FLOOR && totalRowsIsPartial;
-}
-
-/** Exact total already in hand. A partial lower bound is not exact. */
+/** Exact total already stored. A 10,000 preview, or a partial lower bound, is not exact. */
 export function exactResultRowTotal(
   totalRows: number | null | undefined,
   totalRowsIsPartial: boolean,
@@ -26,9 +13,44 @@ export function exactResultRowTotal(
   return totalRows;
 }
 
-/** Ease-out so the last frames settle on the total. `t` is 0..1 progress. */
-export function easedResultRowCount(from: number, to: number, t: number): number {
-  const clamped = Math.min(1, Math.max(0, t));
-  const eased = 1 - (1 - clamped) ** 3;
-  return Math.round(from + (to - from) * eased);
+/**
+ * The card must load the real total when the screen only kept the 10,000-row preview
+ * or the stored total is still a lower bound.
+ */
+export function resultRowsNeedExactLoad(
+  totalRows: number | null | undefined,
+  shownRows: number,
+  totalRowsIsPartial: boolean,
+): boolean {
+  if (exactResultRowTotal(totalRows, totalRowsIsPartial) != null) return false;
+  if (shownRows >= RESULT_ROW_PREVIEW_FLOOR) return true;
+  if (totalRowsIsPartial) return true;
+  return totalRows != null && shownRows > 0 && totalRows > shownRows;
+}
+
+/** Full-match COUNT(*). Returns null when the engine does not return a row count. */
+export async function fetchExactMatchRowCount(
+  req: RecordMatchRequest,
+  signal?: AbortSignal,
+): Promise<number | null> {
+  const counted: RecordMatchRequest = { ...req, countOnly: true };
+  delete counted.resultLimit;
+  let row: Record<string, unknown> | null = null;
+  let failed = false;
+  await runRecordMatchStream(
+    counted,
+    {
+      onMeta: () => undefined,
+      onRow: (next) => {
+        row = next;
+      },
+      onDone: () => undefined,
+      onError: () => {
+        failed = true;
+      },
+    },
+    signal,
+  );
+  if (failed) return null;
+  return rowCountFromMatchRow(row);
 }

@@ -98,6 +98,7 @@ export default function DashboardPage() {
                   totalRows={lastResult.totalRows}
                   shownRows={lastResult.rows.length}
                   totalRowsIsPartial={countIsPartial}
+                  matchRequest={lastResult.matchExportRequest ?? null}
                 />
               </div>
               <div className="lbl">{t("statResultRows")}</div>
