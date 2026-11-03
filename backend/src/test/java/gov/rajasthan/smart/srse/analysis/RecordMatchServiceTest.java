@@ -1944,7 +1944,7 @@ class RecordMatchServiceTest {
     }
 
     @Test
-    void chartBucketsGroupEveryValueInTheFullMatch() {
+    void chartBucketsGroupTheFullMatchAndFoldTheRestIntoOther() {
         RecordMatchRequest limited = new RecordMatchRequest(
                 List.of(exact("beneficiary", "district")),
                 List.of(exact("beneficiary", "district")),
@@ -1966,12 +1966,13 @@ class RecordMatchServiceTest {
         String sql = sqlCaptor.getValue();
         assertTrue(sql.contains("chart_src"), sql);
         assertTrue(sql.contains("GROUP BY \"source_district\""), sql);
-        assertFalse(sql.contains("LIMIT "), sql);
+        assertTrue(sql.contains("LIMIT 51"), sql);
+        assertFalse(sql.contains("LIMIT 10000"), sql);
         assertEquals(1000L, summary.totalRows());
-        assertFalse(summary.truncated());
+        assertTrue(summary.truncated());
         assertEquals(51, summary.buckets().size());
-        assertFalse(summary.buckets().get(50).other());
-        assertEquals(10L, summary.buckets().get(50).count());
+        assertTrue(summary.buckets().get(50).other());
+        assertEquals(500L, summary.buckets().get(50).count());
 
         service.chartBuckets(limited, List.of("source_district"));
         verify(jdbc, times(1)).queryForList(anyString(), any(Object[].class));

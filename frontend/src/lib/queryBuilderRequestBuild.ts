@@ -19,6 +19,7 @@ import {
   type ExtractRuleRow,
   type ReportConfig,
 } from "@/lib/queryBuilderPipelineTypes";
+import { MATCH_DISPLAY_ROW_CAP } from "@/lib/matchStreamLimit";
 
 const RULE_OPS: { value: RuleOperator; needsValue: boolean }[] = [
   { value: "EQ", needsValue: true },
@@ -225,19 +226,29 @@ export function retainValidDisplayColumns(
 
 function applyExtractRunOptions(req: RecordMatchRequest, extract: ExtractConfig): RecordMatchRequest {
   const next = { ...req };
-  if (extract.resultLimit != null && extract.resultLimit > 0) {
-    next.resultLimit = extract.resultLimit;
-  }
   if (extract.countOnly) {
     next.countOnly = true;
+  } else if (extract.resultLimit != null && extract.resultLimit > 0) {
+    next.resultLimit = extract.resultLimit;
+  } else {
+    // Bound the on-screen preview at the engine so Presto stops after the grid cap.
+    next.resultLimit = MATCH_DISPLAY_ROW_CAP;
   }
   return next;
+}
+
+/** Preview stream only: apply the 10,000-row grid cap when the officer left Result limit empty. */
+export function withPreviewStreamLimit(req: RecordMatchRequest): RecordMatchRequest {
+  if (req.countOnly) return req;
+  if (req.resultLimit != null && req.resultLimit > 0) return req;
+  return { ...req, resultLimit: MATCH_DISPLAY_ROW_CAP };
 }
 
 /** Request for full export — never carries the on-screen row cap or count-only mode. */
 export function buildExtractExportRequest(dualMode: boolean, extract: ExtractConfig): RecordMatchRequest | null {
   const withoutRunOptions = { ...extract, resultLimit: null, countOnly: false };
-  return buildExtractRequest(dualMode, withoutRunOptions);
+  const req = buildExtractRequest(dualMode, withoutRunOptions);
+  return req ? withoutCountOnly(req) : null;
 }
 
 /** Extract-stage request: tables, projections, keys, rules — no report grouping/comparisons. */

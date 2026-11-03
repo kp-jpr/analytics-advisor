@@ -110,6 +110,8 @@ export type AnalysisResultsGridProps = Readonly<{
   chartPlacement?: "above" | "below";
   /** When set, charts count the full match instead of the rows on screen. */
   chartRequest?: RecordMatchRequest | null;
+  /** When set, the chart publishes its full-match total for the Result Rows card. */
+  chartHoldKey?: string | null;
   /** Exact match size from chart grouping. */
   onFullRowCount?: (totalRows: number) => void;
   /** When true, CSV/Excel use the backend match export (UI sort does not apply). */
@@ -212,6 +214,7 @@ export function AnalysisResultsGrid({
   showCharts = true,
   chartPlacement = "below",
   chartRequest = null,
+  chartHoldKey = null,
   onFullRowCount,
   serverExportAvailable = Boolean(onDownloadFullExport || onDownloadFullCsv),
 }: AnalysisResultsGridProps) {
@@ -397,6 +400,7 @@ export function AnalysisResultsGrid({
         getValue={(row, key) => String(row[key] ?? "")}
         getCount={() => 1}
         loadBuckets={loadChartBuckets}
+        chartHoldKey={chartHoldKey}
         onFullRowCount={onFullRowCount}
       />
     </div>

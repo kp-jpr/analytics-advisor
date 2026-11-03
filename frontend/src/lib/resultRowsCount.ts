@@ -28,6 +28,44 @@ export function resultRowsNeedExactLoad(
   return totalRows != null && shownRows > 0 && totalRows > shownRows;
 }
 
+type ExactFromChartSlot = {
+  promise: Promise<number | null>;
+  resolve: (total: number | null) => void;
+  settled: boolean;
+};
+
+const exactFromChartSlots = new Map<string, ExactFromChartSlot>();
+
+function exactFromChartSlot(key: string): ExactFromChartSlot {
+  const existing = exactFromChartSlots.get(key);
+  if (existing) return existing;
+  let resolve!: (total: number | null) => void;
+  const promise = new Promise<number | null>((r) => {
+    resolve = (total) => {
+      const slot = exactFromChartSlots.get(key);
+      if (!slot || slot.settled) return;
+      slot.settled = true;
+      r(total);
+    };
+  });
+  const slot: ExactFromChartSlot = { promise, resolve, settled: false };
+  exactFromChartSlots.set(key, slot);
+  return slot;
+}
+
+/**
+ * Result Rows waits on this when the dashboard chart is the source of the exact total.
+ * Resolves with the chart `totalRows`, or null if the chart failed (caller may fall back to COUNT).
+ */
+export function awaitExactFromChart(key: string): Promise<number | null> {
+  return exactFromChartSlot(key).promise;
+}
+
+/** Chart publishes the full-match total so the Result Rows card can leave Loading. */
+export function publishExactFromChart(key: string, totalRows: number | null) {
+  exactFromChartSlot(key).resolve(totalRows);
+}
+
 /** Full-match COUNT(*). Returns null when the engine does not return a row count. */
 export async function fetchExactMatchRowCount(
   req: RecordMatchRequest,

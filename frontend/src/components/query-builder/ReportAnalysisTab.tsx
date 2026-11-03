@@ -82,6 +82,7 @@ import {
   buildMergedRequest,
   preserveExtractDisplayColumnsOnSave,
   rowCountFromMatchRow,
+  withPreviewStreamLimit,
   withoutCountOnly,
 } from "@/lib/queryBuilderRequestBuild";
 import { requestsEqual } from "@/lib/queryBuilderPipelineTypes";
@@ -1701,19 +1702,20 @@ export default function ReportAnalysisTab({
     let streamSucceeded = false;
     let countOnlyRow: Record<string, unknown> | null = null;
     try {
+      const streamReq = withPreviewStreamLimit(req);
       await runRecordMatchStream(
-        req,
+        streamReq,
         {
           onMeta: (meta) => {
-            streamColumnsRef.current = req.countOnly ? [] : meta.columns;
-            if (!req.countOnly) {
+            streamColumnsRef.current = streamReq.countOnly ? [] : meta.columns;
+            if (!streamReq.countOnly) {
               setMatchColumns(meta.columns);
             }
             setMatchSql(meta.sql);
             lastStreamSqlRef.current = meta.sql;
           },
           onRow: (row) => {
-            if (req.countOnly) {
+            if (streamReq.countOnly) {
               countOnlyRow = row;
               return;
             }

@@ -393,9 +393,13 @@ public class RecordMatchService {
         return new ComparisonSummaryResponse(total, matched, noCounterpart, List.copyOf(columns));
     }
 
+    /** How many categories a chart draws. One extra group is read so the rest can fold into Other. */
+    public static final int CHART_CATEGORY_CAP = 50;
+
     /**
      * Counts every matching row, grouped by the requested output columns.
-     * Every distinct value is returned. The on-screen 10,000-row preview is not used.
+     * Returns at most {@link #CHART_CATEGORY_CAP} groups plus an Other bucket for the rest.
+     * The on-screen 10,000-row preview is not used.
      */
     public ChartBucketsResponse chartBuckets(RecordMatchRequest req, List<String> columns) {
         return chartBuckets(planMatchForSave(req.forFullResult()), columns);
@@ -440,16 +444,25 @@ public class RecordMatchService {
             return new ChartBucketsResponse(0, false, List.of());
         }
         long total = toLong(cell(rows.get(0), "total_rows"));
+        boolean truncated = rows.size() > CHART_CATEGORY_CAP;
+        int kept = truncated ? CHART_CATEGORY_CAP : rows.size();
         List<ChartBucketsResponse.ChartBucket> buckets = new ArrayList<>();
-        for (Map<String, Object> row : rows) {
+        long keptSum = 0;
+        for (int i = 0; i < kept; i++) {
+            Map<String, Object> row = rows.get(i);
             List<String> values = new ArrayList<>();
             for (int c = 0; c < grouped.size(); c++) {
                 values.add(cellText(cell(row, "c" + c)));
             }
             long count = toLong(cell(row, "bucket_count"));
+            keptSum += count;
             buckets.add(new ChartBucketsResponse.ChartBucket(List.copyOf(values), count, false));
         }
-        return new ChartBucketsResponse(total, false, List.copyOf(buckets));
+        if (truncated) {
+            long other = Math.max(0, total - keptSum);
+            buckets.add(new ChartBucketsResponse.ChartBucket(List.of(), other, true));
+        }
+        return new ChartBucketsResponse(total, truncated, List.copyOf(buckets));
     }
 
     private static List<String> validateChartColumns(MatchQuery query, List<String> columns) {
@@ -486,7 +499,8 @@ public class RecordMatchService {
                 .append(matchSql)
                 .append(") chart_src ")
                 .append(groupBy)
-                .append(" ORDER BY bucket_count DESC");
+                .append(" ORDER BY bucket_count DESC LIMIT ")
+                .append(CHART_CATEGORY_CAP + 1);
         return select.toString();
     }
 

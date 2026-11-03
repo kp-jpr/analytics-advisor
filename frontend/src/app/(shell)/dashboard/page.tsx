@@ -7,6 +7,7 @@ import { ResultRowsCount } from "@/components/ResultRowsCount";
 import { useShell } from "@/components/shell/ShellProviders";
 import { downloadRecordMatchExport, type MatchExportFormat } from "@/lib/analysisApi";
 import { visibleAttributeNullCounts } from "@/lib/attributeNullCounts";
+import { resultRowsNeedExactLoad } from "@/lib/resultRowsCount";
 import { bufferedExportAllowed, resultPreviewIsTruncated } from "@/lib/fullResultExport";
 import { useQueryResultsStore } from "@/lib/queryResultsStore";
 import { defaultExportFilename, exportBufferedAnalyticalResult, triggerBlobDownload } from "@/lib/resultTableExport";
@@ -16,6 +17,10 @@ export default function DashboardPage() {
   const lastResult = useQueryResultsStore((s) => s.lastResult);
   const truncated = resultPreviewIsTruncated(lastResult?.totalRows, lastResult?.rows.length ?? 0);
   const countIsPartial = Boolean(lastResult?.totalRowsIsPartial);
+  const chartHoldKey = lastResult && lastResult.matchExportRequest
+    && resultRowsNeedExactLoad(lastResult.totalRows, lastResult.rows.length, countIsPartial)
+    ? lastResult.capturedAt
+    : null;
 
   const numericCols = useMemo(() => {
     if (!lastResult?.rows.length) return [] as string[];
@@ -99,6 +104,7 @@ export default function DashboardPage() {
                   shownRows={lastResult.rows.length}
                   totalRowsIsPartial={countIsPartial}
                   matchRequest={lastResult.matchExportRequest ?? null}
+                  chartHoldKey={chartHoldKey}
                 />
               </div>
               <div className="lbl">{t("statResultRows")}</div>
@@ -154,6 +160,7 @@ export default function DashboardPage() {
             showCharts
             chartPlacement="above"
             chartRequest={lastResult.matchExportRequest ?? null}
+            chartHoldKey={chartHoldKey}
             columnLabels={lastResult.columnLabels}
             onDownloadFullExport={downloadFullExport}
             serverExportAvailable={Boolean(lastResult.matchExportRequest)}

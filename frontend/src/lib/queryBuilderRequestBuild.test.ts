@@ -12,6 +12,7 @@ import {
   selectAllDisplayColumns,
   toggleDisplayColumnSelection,
   withoutCountOnly,
+  withPreviewStreamLimit,
 } from "@/lib/queryBuilderRequestBuild";
 import {
   EMPTY_EXTRACT_CONFIG,
@@ -271,6 +272,25 @@ describe("ordinary source rules", () => {
     const fromExportBuilder = buildExtractExportRequest(true, extract({ resultLimit: 10_000, countOnly: true }));
     expect(fromExportBuilder?.resultLimit).toBeUndefined();
     expect(fromExportBuilder?.countOnly).toBeUndefined();
+  });
+
+  it("defaults an empty Result limit to the 10,000-row preview cap and strips it for full result", () => {
+    const preview = buildExtractRequest(true, extract({ resultLimit: null }))!;
+    expect(preview.resultLimit).toBe(10_000);
+    expect(withoutCountOnly(preview).resultLimit).toBeUndefined();
+    const officerCap = buildExtractRequest(true, extract({ resultLimit: 500 }))!;
+    expect(officerCap.resultLimit).toBe(500);
+    const counted = buildExtractRequest(true, extract({ countOnly: true, resultLimit: null }))!;
+    expect(counted.countOnly).toBe(true);
+    expect(counted.resultLimit).toBeUndefined();
+  });
+
+  it("applies the preview stream cap without changing a full-result export request", () => {
+    const uncapped = withoutCountOnly(buildExtractRequest(true, extract({ resultLimit: null }))!);
+    expect(uncapped.resultLimit).toBeUndefined();
+    expect(withPreviewStreamLimit(uncapped).resultLimit).toBe(10_000);
+    expect(withPreviewStreamLimit({ ...uncapped, resultLimit: 250 }).resultLimit).toBe(250);
+    expect(withPreviewStreamLimit({ ...uncapped, countOnly: true }).resultLimit).toBeUndefined();
   });
 
   it("does not send countOnly when group-by is on", () => {

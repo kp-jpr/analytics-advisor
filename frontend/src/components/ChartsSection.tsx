@@ -15,6 +15,7 @@ import {
   YAxis,
 } from "recharts";
 import { VennDiagram } from "@/components/VennDiagram";
+import { publishExactFromChart } from "@/lib/resultRowsCount";
 import { presentQueryError } from "@/lib/queryErrorText";
 
 export type ChartDimension = { key: string; label: string };
@@ -31,7 +32,7 @@ const MAX_INTERSECTION_DIMS = 5;
 // Separator for composite group-by keys — unlikely to appear in real data values.
 const KEY_SEP = "␟";
 
-// Bar and pie charts draw every distinct value from the full match.
+// Bar and pie charts count every matching row and draw at most the top 50 values plus Other.
 // A plain HTML table row is far cheaper than an SVG bar, so this can be looser.
 const MAX_TABLE_ROWS = 200;
 // Matrix mode multiplies two axes into rowVals.length * colVals.length cells —
@@ -83,6 +84,11 @@ type ChartsSectionProps<T> = Readonly<{
   }>;
   /** Exact match size from a full-result chart, so the row count can leave the preview lower bound. */
   onFullRowCount?: (totalRows: number) => void;
+  /**
+   * When set, this chart publishes its full-match `totalRows` so the Result Rows
+   * card can show the exact total without a separate COUNT query.
+   */
+  chartHoldKey?: string | null;
 }>;
 
 function chartTypeLabel(t: ChartType): string {
@@ -365,6 +371,7 @@ export function ChartsSection<T>({
   getCount,
   title = "Charts",
   loadBuckets,
+  chartHoldKey = null,
 }: ChartsSectionProps<T>) {
   const [chartType, setChartType] = useState<ChartType>("bar");
   const [singleDim, setSingleDim] = useState(dimensions[0]?.key ?? "");
@@ -372,6 +379,7 @@ export function ChartsSection<T>({
   const [intersectionDisplay, setIntersectionDisplay] = useState<IntersectionDisplay>("venn");
   const [vennValues, setVennValues] = useState<Record<string, string>>({});
   const [serverSingle, setServerSingle] = useState<AggEntry[] | null>(null);
+  const [serverSingleTruncated, setServerSingleTruncated] = useState(false);
   const [serverIntersection, setServerIntersection] = useState<FlatIntersection | null>(null);
   const [chartLoading, setChartLoading] = useState(false);
   const [chartNotice, setChartNotice] = useState<string | null>(null);
@@ -380,18 +388,28 @@ export function ChartsSection<T>({
 
   useEffect(() => {
     if (!loadBuckets) return undefined;
-    if (chartType === "intersection") {
-      if (intersectionDims.length < 2) {
-        setServerIntersection(null);
-        setChartLoading(false);
-        return undefined;
-      }
-      let cancelled = false;
-      setChartLoading(true);
-      setChartNotice(null);
-      loadBuckets(intersectionDims)
-        .then((payload) => {
+    let cancelled = false;
+    let publishedExact = false;
+
+    function publishExact(total: number | null) {
+      if (!chartHoldKey || publishedExact) return;
+      publishedExact = true;
+      publishExactFromChart(chartHoldKey, total);
+    }
+
+    async function load() {
+      if (chartType === "intersection") {
+        if (intersectionDims.length < 2) {
+          setServerIntersection(null);
+          setChartLoading(false);
+          return;
+        }
+        setChartLoading(true);
+        setChartNotice(null);
+        try {
+          const payload = await loadBuckets!(intersectionDims);
           if (cancelled) return;
+          publishExact(payload.totalRows);
           const combos = payload.buckets.map((bucket) => ({
             parts: bucket.other
               ? intersectionDims.map(() => "Other")
@@ -402,56 +420,56 @@ export function ChartsSection<T>({
             setServerIntersection({
               kind: "flat",
               combos,
-              truncated: false,
+              truncated: payload.truncated,
               fullCount: combos.length,
             });
           });
-        })
-        .catch((err: unknown) => {
+        } catch (err: unknown) {
           if (!cancelled) {
+            publishExact(null);
             setChartNotice(presentQueryError(
               err instanceof Error ? err.message : String(err),
               "The analytical engine is unavailable. Check the Presto connection, then try again.",
             ));
           }
-        })
-        .finally(() => {
+        } finally {
           if (!cancelled) setChartLoading(false);
-        });
-      return () => {
-        cancelled = true;
-      };
-    }
-    if (!singleDim) return undefined;
-    let cancelled = false;
-    setChartLoading(true);
-    setChartNotice(null);
-    loadBuckets([singleDim])
-      .then((payload) => {
+        }
+        return;
+      }
+      if (!singleDim) return;
+      setChartLoading(true);
+      setChartNotice(null);
+      try {
+        const payload = await loadBuckets!([singleDim]);
         if (cancelled) return;
+        publishExact(payload.totalRows);
         const next = payload.buckets.map((bucket) => ({
           value: bucket.other ? "Other" : bucket.values[0] || "(blank)",
           count: bucket.count,
         }));
         startTransition(() => {
           setServerSingle(next);
+          setServerSingleTruncated(payload.truncated);
         });
-      })
-      .catch((err: unknown) => {
+      } catch (err: unknown) {
         if (!cancelled) {
+          publishExact(null);
           setChartNotice(presentQueryError(
             err instanceof Error ? err.message : String(err),
             "The analytical engine is unavailable. Check the Presto connection, then try again.",
           ));
         }
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setChartLoading(false);
-      });
+      }
+    }
+
+    void load();
     return () => {
       cancelled = true;
     };
-  }, [loadBuckets, chartType, singleDim, intersectionKey, intersectionDims]);
+  }, [loadBuckets, chartType, singleDim, intersectionKey, intersectionDims, chartHoldKey]);
 
   const singleAggFull = useMemo(
     () => (serverMode ? (serverSingle ?? []) : aggregateSingleDim(rows, singleDim, getValue, getCount)),
@@ -567,7 +585,9 @@ export function ChartsSection<T>({
 
           {serverMode && !chartLoading && serverSingle && serverSingle.length > 0 && (
             <p className="srse-text-muted" style={{ fontSize: "0.78rem", marginTop: "-0.35rem", marginBottom: "0.6rem" }}>
-              Counts include every matching row.
+              {serverSingleTruncated
+                ? "Counts include every matching row. Showing the top 50 values by count. Remaining rows are in Other."
+                : "Counts include every matching row."}
             </p>
           )}
 
