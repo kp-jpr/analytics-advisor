@@ -41,7 +41,11 @@ class AnalysisAuditServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new AnalysisAuditService(matchService, columnValuesService, auditCapture, scopeSummary);
+        @SuppressWarnings("unchecked")
+        org.springframework.beans.factory.ObjectProvider<gov.rajasthan.smart.srse.lineage.LineageCaptureService> lineage =
+                org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class);
+        org.mockito.Mockito.when(lineage.getIfAvailable()).thenReturn(null);
+        service = new AnalysisAuditService(matchService, columnValuesService, auditCapture, scopeSummary, lineage);
         when(scopeSummary.summarizeCurrentOfficer()).thenReturn("BYPASS");
         when(scopeSummary.currentActorUserId()).thenReturn(42L);
     }

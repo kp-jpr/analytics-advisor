@@ -171,12 +171,17 @@ class RecordMatchExtractRulesTest {
         when(scopeFrom.planFrom(SOURCE_TABLE)).thenReturn(ScopeFilteredFrom.unfiltered(SRC));
         when(scopeSummary.summarizeCurrentOfficer()).thenReturn("RJ-JPR");
         when(scopeSummary.currentActorUserId()).thenReturn(7L);
+        @SuppressWarnings("unchecked")
+        org.springframework.beans.factory.ObjectProvider<gov.rajasthan.smart.srse.lineage.LineageCaptureService> lineage =
+                org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class);
+        org.mockito.Mockito.when(lineage.getIfAvailable()).thenReturn(null);
         auditService = new AnalysisAuditService(
                 matchService,
                 new ColumnDistinctValuesService(jdbc, registry, scopeFrom,
                         new AnalysisProperties(5, 120, 4, 2, 10, 3, 50_000_000L, 10, 100, 100_000)),
                 auditCapture,
-                scopeSummary);
+                scopeSummary,
+                lineage);
         DisplayColumn district = new DisplayColumn("iceberg", "srse", "beneficiary", "district_code");
         Ast.PredicateSpec rules = new Ast.PredicateSpec(
                 new Ast.PredicateNode(col("age_years"), Ast.Operator.GT, 48000));

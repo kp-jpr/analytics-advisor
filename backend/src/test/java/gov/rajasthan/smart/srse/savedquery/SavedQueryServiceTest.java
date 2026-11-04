@@ -57,6 +57,10 @@ class SavedQueryServiceTest {
     @BeforeEach
     void setUp() {
         codec = new SavedQueryPayloadCodec(new ObjectMapper());
+        @SuppressWarnings("unchecked")
+        org.springframework.beans.factory.ObjectProvider<gov.rajasthan.smart.srse.lineage.LineageCaptureService> lineage =
+                org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class);
+        org.mockito.Mockito.when(lineage.getIfAvailable()).thenReturn(null);
         service = new SavedQueryService(
                 savedQueryRepository,
                 grantRepository,
@@ -67,7 +71,8 @@ class SavedQueryServiceTest {
                 adminAuthorizationService,
                 auditCapture,
                 scopeSummary,
-                shareGate);
+                shareGate,
+                lineage);
     }
 
     @Test

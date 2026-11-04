@@ -1,0 +1,145 @@
+databaseChangeLog:
+  - changeSet:
+      id: 018-lineage-event
+      author: analytics-advisor
+      changes:
+        - createTable:
+            tableName: lineage_event
+            columns:
+              - column:
+                  name: id
+                  type: BIGINT
+                  autoIncrement: true
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: occurred_at
+                  type: TIMESTAMP
+                  constraints:
+                    nullable: false
+              - column:
+                  name: actor_username
+                  type: VARCHAR(128)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: action
+                  type: VARCHAR(32)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: audit_event_id
+                  type: BIGINT
+              - column:
+                  name: saved_query_id
+                  type: BIGINT
+              - column:
+                  name: request_fingerprint
+                  type: VARCHAR(128)
+              - column:
+                  name: label
+                  type: VARCHAR(512)
+        - createIndex:
+            tableName: lineage_event
+            indexName: idx_lineage_event_occurred
+            columns:
+              - column:
+                  name: occurred_at
+        - createIndex:
+            tableName: lineage_event
+            indexName: idx_lineage_event_actor
+            columns:
+              - column:
+                  name: actor_username
+
+  - changeSet:
+      id: 018-lineage-node
+      author: analytics-advisor
+      changes:
+        - createTable:
+            tableName: lineage_node
+            columns:
+              - column:
+                  name: id
+                  type: BIGINT
+                  autoIncrement: true
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: event_id
+                  type: BIGINT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: node_key
+                  type: VARCHAR(512)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: node_type
+                  type: VARCHAR(32)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: label
+                  type: VARCHAR(512)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: payload_json
+                  type: VARCHAR(4000)
+        - createIndex:
+            tableName: lineage_node
+            indexName: idx_lineage_node_event
+            columns:
+              - column:
+                  name: event_id
+        - createIndex:
+            tableName: lineage_node
+            indexName: idx_lineage_node_key
+            columns:
+              - column:
+                  name: node_key
+
+  - changeSet:
+      id: 018-lineage-edge
+      author: analytics-advisor
+      changes:
+        - createTable:
+            tableName: lineage_edge
+            columns:
+              - column:
+                  name: id
+                  type: BIGINT
+                  autoIncrement: true
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: event_id
+                  type: BIGINT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: from_key
+                  type: VARCHAR(512)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: to_key
+                  type: VARCHAR(512)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: edge_type
+                  type: VARCHAR(32)
+                  constraints:
+                    nullable: false
+        - createIndex:
+            tableName: lineage_edge
+            indexName: idx_lineage_edge_event
+            columns:
+              - column:
+                  name: event_id

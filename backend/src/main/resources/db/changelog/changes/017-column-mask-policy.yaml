@@ -1,0 +1,20 @@
+databaseChangeLog:
+  - changeSet:
+      id: 017-column-metadata-mask-policy
+      author: analytics-advisor
+      changes:
+        - addColumn:
+            tableName: analysis_column_metadata
+            columns:
+              - column:
+                  name: mask_policy
+                  type: VARCHAR(16)
+                  defaultValue: NONE
+                  constraints:
+                    nullable: false
+              - column:
+                  name: mask_keep_last
+                  type: INT
+                  defaultValueNumeric: 4
+                  constraints:
+                    nullable: false

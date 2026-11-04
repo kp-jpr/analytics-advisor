@@ -36,6 +36,8 @@ export type RegisteredTable = { name: string; layer: string | null };
 // A column of a registered table: live from the lakehouse, decorated with the
 // admin's business name / fuzzy flag. Columns the admin hid are already
 // filtered out server-side, so anything returned here is selectable.
+export type ColumnMaskPolicy = "NONE" | "FULL" | "PARTIAL" | "HASH";
+
 export type RegisteredColumn = {
   name: string;
   dataType: string;
@@ -44,6 +46,8 @@ export type RegisteredColumn = {
   // Admin opt-in (Aa1): officers get a distinct-values list for this column only when true.
   // Off by default; typing a value always works.
   valuePickerEnabled: boolean;
+  maskPolicy?: ColumnMaskPolicy;
+  maskKeepLast?: number;
 };
 
 // A fully-qualified table address. Used as the identity of a picked table
@@ -752,6 +756,8 @@ export type ColumnMetadata = TableRef & {
   visible: boolean;
   compareAs: CompareAs;
   valuePickerEnabled: boolean;
+  maskPolicy: ColumnMaskPolicy;
+  maskKeepLast: number;
 };
 
 /**
@@ -805,12 +811,24 @@ export async function upsertColumnMetadata(
   compareAs: CompareAs = "AUTO",
   // undefined = leave the stored value alone (the server keeps it when the field is absent)
   valuePickerEnabled?: boolean,
+  maskPolicy?: ColumnMaskPolicy,
+  maskKeepLast?: number,
 ): Promise<ColumnMetadata> {
   const res = await authorizedFetch(`${API_BASE}/api/analysis/column-metadata`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
-    body: JSON.stringify({ ...ref, column, businessName, fuzzyMatchable, visible, compareAs, valuePickerEnabled }),
+    body: JSON.stringify({
+      ...ref,
+      column,
+      businessName,
+      fuzzyMatchable,
+      visible,
+      compareAs,
+      valuePickerEnabled,
+      maskPolicy,
+      maskKeepLast,
+    }),
   }, "admin");
   if (!res.ok) {
     throw new Error(`Analysis service error ${res.status}: ${await readApiErrorMessage(res)}`);

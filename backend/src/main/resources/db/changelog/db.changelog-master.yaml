@@ -47,3 +47,9 @@ databaseChangeLog:
   - include:
       file: changes/016-audit-query-duration.yaml
       relativeToChangelogFile: true
+  - include:
+      file: changes/017-column-mask-policy.yaml
+      relativeToChangelogFile: true
+  - include:
+      file: changes/018-lineage-graph.yaml
+      relativeToChangelogFile: true

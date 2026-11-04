@@ -109,6 +109,18 @@ public class AnalysisColumnMetadata {
     @Column(name = "value_picker_enabled")
     private Boolean valuePickerEnabled = Boolean.FALSE;
 
+    /**
+     * How values of this column are rewritten in match SELECT lists.
+     * Null reads as {@link ColumnMaskPolicy#NONE}.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "mask_policy", length = 16)
+    private ColumnMaskPolicy maskPolicy = ColumnMaskPolicy.NONE;
+
+    /** Characters kept at the end for {@link ColumnMaskPolicy#PARTIAL}. */
+    @Column(name = "mask_keep_last")
+    private Integer maskKeepLast = 4;
+
     protected AnalysisColumnMetadata() {
     }
 
@@ -185,6 +197,29 @@ public class AnalysisColumnMetadata {
      */
     public void setCompareAs(CompareAs compareAs) {
         this.compareAs = compareAs;
+    }
+
+    public ColumnMaskPolicy getMaskPolicy() {
+        return ColumnMaskPolicy.orNone(maskPolicy);
+    }
+
+    public void setMaskPolicy(ColumnMaskPolicy maskPolicy) {
+        this.maskPolicy = ColumnMaskPolicy.orNone(maskPolicy);
+    }
+
+    public int getMaskKeepLast() {
+        if (maskKeepLast == null || maskKeepLast < 1) {
+            return 4;
+        }
+        return Math.min(maskKeepLast, 64);
+    }
+
+    public void setMaskKeepLast(Integer maskKeepLast) {
+        if (maskKeepLast == null || maskKeepLast < 1) {
+            this.maskKeepLast = 4;
+        } else {
+            this.maskKeepLast = Math.min(maskKeepLast, 64);
+        }
     }
 
     public QualifiedColumn toQualifiedColumn() {

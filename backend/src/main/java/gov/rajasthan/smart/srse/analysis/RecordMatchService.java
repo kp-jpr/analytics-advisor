@@ -895,7 +895,8 @@ public class RecordMatchService {
         StringBuilder select = new StringBuilder();
         if (req.grouped()) {
             MatchGroupingSql.appendGroupedSelect(select, outerColumns, req, table, table,
-                    MatchGroupingSql.aggregateColumnTypes(req, table, table, described, described));
+                    MatchGroupingSql.aggregateColumnTypes(req, table, table, described, described),
+                    this::maskedColumnRef);
         } else if (req.sourceDisplayColumns().isEmpty()) {
             select.append("1 AS \"_row\"");
             outerColumns.add("_row");
@@ -915,7 +916,7 @@ public class RecordMatchService {
         }
         params.addAll(scopeParams);
         String sql = "SELECT " + select + " FROM " + from;
-        String groupBy = MatchGroupingSql.groupByClause(req, table, table);
+        String groupBy = MatchGroupingSql.groupByClause(req, table, table, this::maskedColumnRef);
         if (!groupBy.isEmpty()) {
             sql += " GROUP BY " + groupBy;
         }
@@ -1098,7 +1099,8 @@ public class RecordMatchService {
                     select, outerColumns, req, sides.sourceTable(), sides.targetTable(),
                     MatchGroupingSql.aggregateColumnTypes(
                             req, sides.sourceTable(), sides.targetTable(),
-                            sides.sourceColumns(), sides.targetColumns()));
+                            sides.sourceColumns(), sides.targetColumns()),
+                    this::maskedColumnRef);
         } else {
             // Comparison placeholders live in SELECT, which precedes ON in the final SQL —
             // bind comparison params before join params.
@@ -1142,7 +1144,8 @@ public class RecordMatchService {
                 + targetFrom + " ON " + onClause + extraJoins + " WHERE " + where;
 
         if (req.grouped()) {
-            String groupBy = MatchGroupingSql.groupByClause(req, sides.sourceTable(), sides.targetTable());
+            String groupBy = MatchGroupingSql.groupByClause(
+                    req, sides.sourceTable(), sides.targetTable(), this::maskedColumnRef);
             if (!groupBy.isEmpty()) {
                 baseSql += " GROUP BY " + groupBy;
             }
@@ -1234,7 +1237,8 @@ public class RecordMatchService {
             String joinOut = "extra" + n + "_" + extra.joinColumn();
             if (!outerColumns.contains(joinOut)) {
                 appendSelect(select, outerColumns, alias, extra.joinColumn(),
-                        allocateUniqueAlias(joinOut, outerColumns));
+                        allocateUniqueAlias(joinOut, outerColumns),
+                        extra.catalog(), extra.schema(), extra.table());
             }
             List<DisplayColumn> displays = new ArrayList<>();
             for (String column : extra.displayColumns()) {
@@ -1317,11 +1321,15 @@ public class RecordMatchService {
                                        JoinPlan join, RecordMatchRequest req) {
         for (MatchCriterion c : join.sourceColumns()) {
             String baseAlias = "source_" + c.column();
-            appendSelect(select, outerColumns, "src", c.column(), allocateUniqueAlias(baseAlias, outerColumns));
+            appendSelect(select, outerColumns, "src", c.column(),
+                    allocateUniqueAlias(baseAlias, outerColumns),
+                    c.catalog(), c.schema(), c.table());
         }
         for (MatchCriterion c : join.targetColumns()) {
             String baseAlias = "target_" + c.column();
-            appendSelect(select, outerColumns, "tgt", c.column(), allocateUniqueAlias(baseAlias, outerColumns));
+            appendSelect(select, outerColumns, "tgt", c.column(),
+                    allocateUniqueAlias(baseAlias, outerColumns),
+                    c.catalog(), c.schema(), c.table());
         }
         appendDisplaySelects(select, outerColumns, "src", "source_", req.sourceDisplayColumns());
         appendDisplaySelects(select, outerColumns, "tgt", "target_", req.targetDisplayColumns());
@@ -1335,7 +1343,8 @@ public class RecordMatchService {
                 continue;
             }
             String outAlias = allocateUniqueAlias(baseAlias, outerColumns);
-            appendSelect(select, outerColumns, sqlAlias, d.column(), outAlias);
+            appendSelect(select, outerColumns, sqlAlias, d.column(), outAlias,
+                    d.catalog(), d.schema(), d.table());
         }
     }
 
@@ -1350,7 +1359,7 @@ public class RecordMatchService {
                                         String outPrefix, List<UnnestSide> unnests) {
         for (UnnestSide u : unnests) {
             String outAlias = allocateUniqueAlias(outPrefix + u.matchedAlias(), outerColumns);
-            appendSelect(select, outerColumns, sqlAlias, u.matchedAlias(), outAlias);
+            appendSelect(select, outerColumns, sqlAlias, u.matchedAlias(), outAlias, null, null, null);
         }
     }
 
@@ -1605,7 +1614,8 @@ public class RecordMatchService {
         QualifiedTable sourceTable = join.sourceColumns().get(0).qualifiedTable();
         String side = req.dedup().qualifiedTable().equals(sourceTable) ? "src" : "tgt";
         String dedupAlias = "dedup_last_updated";
-        appendSelect(select, outerColumns, side, req.dedup().column(), dedupAlias);
+        appendSelect(select, outerColumns, side, req.dedup().column(), dedupAlias,
+                req.dedup().catalog(), req.dedup().schema(), req.dedup().table());
         return dedupAlias;
     }
 
@@ -2377,12 +2387,34 @@ public class RecordMatchService {
                 c.catalog(), c.schema(), c.table(), c.column());
     }
 
+    private String maskedColumnRef(DisplayColumn column, String qualifiedRef) {
+        Optional<AnalysisColumnMetadata> meta = columnMetadata
+                .findByCatalogNameAndSchemaNameAndTableNameAndColumnName(
+                        column.catalog(), column.schema(), column.table(), column.column());
+        if (meta.isEmpty()) {
+            return qualifiedRef;
+        }
+        return ColumnMaskSql.maskExpression(
+                qualifiedRef, meta.get().getMaskPolicy(), meta.get().getMaskKeepLast());
+    }
+
     private void appendSelect(StringBuilder select, Set<String> outerColumns,
-                              String alias, String column, String outAlias) {
+                              String alias, String column, String outAlias,
+                              String catalog, String schema, String table) {
         if (select.length() > 0) {
             select.append(", ");
         }
-        select.append(alias).append('.').append(column).append(" AS \"").append(outAlias).append('"');
+        String ref = alias + "." + column;
+        String expr = ref;
+        if (catalog != null && schema != null && table != null) {
+            Optional<AnalysisColumnMetadata> meta = columnMetadata
+                    .findByCatalogNameAndSchemaNameAndTableNameAndColumnName(catalog, schema, table, column);
+            if (meta.isPresent()) {
+                expr = ColumnMaskSql.maskExpression(
+                        ref, meta.get().getMaskPolicy(), meta.get().getMaskKeepLast());
+            }
+        }
+        select.append(expr).append(" AS \"").append(outAlias).append('"');
         outerColumns.add(outAlias);
     }
 

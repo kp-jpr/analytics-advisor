@@ -6,8 +6,10 @@ import gov.rajasthan.smart.srse.audit.AuditEventDraft;
 import gov.rajasthan.smart.srse.audit.AuditOutcome;
 import gov.rajasthan.smart.srse.audit.AuditScopeSummaryService;
 import gov.rajasthan.smart.srse.audit.QueryShapeAudit;
+import gov.rajasthan.smart.srse.lineage.LineageCaptureService;
 import gov.rajasthan.smart.srse.monitoring.ActiveQueryKind;
 import gov.rajasthan.smart.srse.monitoring.QueryExecutionTicket;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -28,16 +30,19 @@ public class AnalysisAuditService {
     private final ColumnDistinctValuesService columnValuesService;
     private final AuditCaptureService auditCapture;
     private final AuditScopeSummaryService scopeSummary;
+    private final ObjectProvider<LineageCaptureService> lineageCapture;
 
     public AnalysisAuditService(
             RecordMatchService matchService,
             ColumnDistinctValuesService columnValuesService,
             AuditCaptureService auditCapture,
-            AuditScopeSummaryService scopeSummary) {
+            AuditScopeSummaryService scopeSummary,
+            ObjectProvider<LineageCaptureService> lineageCapture) {
         this.matchService = matchService;
         this.columnValuesService = columnValuesService;
         this.auditCapture = auditCapture;
         this.scopeSummary = scopeSummary;
+        this.lineageCapture = lineageCapture;
     }
 
     public AuditedMatchQuery planMatchAudited(RecordMatchRequest req) {
@@ -153,6 +158,10 @@ public class AnalysisAuditService {
 
     public void recordExport(RecordMatchRequest req, RecordMatchService.MatchQuery query, String formatLabel) {
         auditCapture.recordExportRequired(exportDraft(req, query, formatLabel + " export"));
+        LineageCaptureService lineage = lineageCapture.getIfAvailable();
+        if (lineage != null) {
+            lineage.captureExportBestEffort(req, currentUsername(), formatLabel);
+        }
     }
 
     public void recordExport(RecordMatchRequest req, RecordMatchService.MatchQuery query) {
@@ -203,6 +212,10 @@ public class AnalysisAuditService {
                     ? matchService.planMatch(req)
                     : matchService.planMatchForSave(req);
             auditCapture.recordBestEffort(buildDraft(action, AuditOutcome.SUCCESS, req, query, null, ticket));
+            LineageCaptureService lineage = lineageCapture.getIfAvailable();
+            if (lineage != null && action == AuditActionType.QUERY_EXECUTED && estimateRows) {
+                lineage.captureRunBestEffort(req, ticket.actorUsername(), ticket.queryId());
+            }
             return new AuditedMatchQuery(query, ticket);
         } catch (RuntimeException ex) {
             auditCapture.recordBestEffort(buildDraft(

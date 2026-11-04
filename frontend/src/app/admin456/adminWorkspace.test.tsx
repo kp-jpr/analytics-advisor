@@ -416,6 +416,7 @@ describe("Admin workspace", () => {
       anchor.getAttribute("href"),
     );
     expect(hrefs).not.toContain("/admin456?section=audit");
+    expect(hrefs).not.toContain("/admin456?section=lineage");
     expect(hrefs).not.toContain("/admin456?section=otp");
     expect(hrefs).not.toContain("/admin456?section=data-sources");
     expect(contentOf(view).querySelector("h1")?.textContent).toBe("Users & Roles");
@@ -438,6 +439,7 @@ describe("Admin workspace", () => {
   it("shows audit and otp in the menu when the session allows them", async () => {
     const view = await mount();
     expect(view.querySelector("a[href='/admin456?section=audit']")).toBeTruthy();
+    expect(view.querySelector("a[href='/admin456?section=lineage']")).toBeTruthy();
     expect(view.querySelector("a[href='/admin456?section=otp']")).toBeTruthy();
   });
 

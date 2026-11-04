@@ -288,6 +288,8 @@ export type AdminConfigBundle = {
     visible: boolean;
     compareAs: CompareAs;
     valuePickerEnabled?: boolean;
+    maskPolicy?: "NONE" | "FULL" | "PARTIAL" | "HASH";
+    maskKeepLast?: number;
   }[];
 };
 

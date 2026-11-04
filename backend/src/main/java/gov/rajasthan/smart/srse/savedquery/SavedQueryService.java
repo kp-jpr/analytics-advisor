@@ -12,6 +12,8 @@ import gov.rajasthan.smart.srse.identity.AdminAuthorizationService;
 import gov.rajasthan.smart.srse.identity.AppUser;
 import gov.rajasthan.smart.srse.identity.AppUserRepository;
 import gov.rajasthan.smart.srse.identity.AuthenticatedUserService;
+import gov.rajasthan.smart.srse.lineage.LineageCaptureService;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,6 +39,7 @@ public class SavedQueryService {
     private final AuditCaptureService auditCapture;
     private final AuditScopeSummaryService scopeSummary;
     private final SavedQueryShareGate shareGate;
+    private final ObjectProvider<LineageCaptureService> lineageCapture;
 
     public SavedQueryService(
             SavedQueryRepository savedQueryRepository,
@@ -48,7 +51,8 @@ public class SavedQueryService {
             AdminAuthorizationService adminAuthorizationService,
             AuditCaptureService auditCapture,
             AuditScopeSummaryService scopeSummary,
-            SavedQueryShareGate shareGate) {
+            SavedQueryShareGate shareGate,
+            ObjectProvider<LineageCaptureService> lineageCapture) {
         this.savedQueryRepository = savedQueryRepository;
         this.grantRepository = grantRepository;
         this.payloadCodec = payloadCodec;
@@ -59,6 +63,7 @@ public class SavedQueryService {
         this.auditCapture = auditCapture;
         this.scopeSummary = scopeSummary;
         this.shareGate = shareGate;
+        this.lineageCapture = lineageCapture;
     }
 
     @Transactional(readOnly = true)
@@ -106,6 +111,10 @@ public class SavedQueryService {
         entity.setUpdatedAt(now);
         SavedQuery saved = savedQueryRepository.save(entity);
         audit(AuditActionType.SAVED_QUERY_CREATED, "saved query " + saved.getId());
+        LineageCaptureService lineage = lineageCapture.getIfAvailable();
+        if (lineage != null) {
+            lineage.captureSavedBestEffort(body.request(), me.getUsername(), saved.getId(), saved.getName());
+        }
         return detailOf(saved, body.request());
     }
 
@@ -120,6 +129,10 @@ public class SavedQueryService {
         query.setPayloadText(payloadCodec.encode(body.request()));
         query.setUpdatedAt(Instant.now());
         audit(AuditActionType.SAVED_QUERY_UPDATED, "saved query " + id);
+        LineageCaptureService lineage = lineageCapture.getIfAvailable();
+        if (lineage != null) {
+            lineage.captureSavedBestEffort(body.request(), me.getUsername(), query.getId(), query.getName());
+        }
         return detailOf(query, body.request());
     }
 

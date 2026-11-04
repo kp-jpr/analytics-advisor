@@ -37,6 +37,7 @@ import {
   fetchAnalysisLimits,
   upsertColumnMetadata,
   type AnalysisLimits,
+  type ColumnMaskPolicy,
   type ColumnMetadata,
   type CompareAs,
 } from "@/lib/analysisApi";
@@ -463,6 +464,8 @@ function ColumnMetadataRowEditor({
   const [visible, setVisible] = useState(row.visible);
   const [compareAs, setCompareAs] = useState<CompareAs>(row.compareAs ?? "AUTO");
   const [valuePickerEnabled, setValuePickerEnabled] = useState(row.valuePickerEnabled ?? false);
+  const [maskPolicy, setMaskPolicy] = useState<ColumnMaskPolicy>(row.maskPolicy ?? "NONE");
+  const [maskKeepLast, setMaskKeepLast] = useState(row.maskKeepLast ?? 4);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -471,7 +474,9 @@ function ColumnMetadataRowEditor({
     businessName !== (row.businessName ?? "") ||
     fuzzyMatchable !== row.fuzzyMatchable ||
     visible !== row.visible ||
-    compareAs !== (row.compareAs ?? "AUTO");
+    compareAs !== (row.compareAs ?? "AUTO") ||
+    maskPolicy !== (row.maskPolicy ?? "NONE") ||
+    maskKeepLast !== (row.maskKeepLast ?? 4);
 
   // Unique per fully-qualified column — the same table.column can exist in
   // both the Silver and Gold catalog, so the bare pair is not a unique DOM id.
@@ -489,6 +494,8 @@ function ColumnMetadataRowEditor({
         visible,
         compareAs,
         valuePickerEnabled,
+        maskPolicy,
+        maskKeepLast,
       );
       onChanged();
     } catch (err: unknown) {
@@ -574,6 +581,33 @@ function ColumnMetadataRowEditor({
         </label>
       </td>
       <td>
+        <select
+          id={`col-meta-mask-${rowId}`}
+          aria-label="Mask policy"
+          className="srse-select"
+          value={maskPolicy}
+          onChange={(e) => setMaskPolicy(e.target.value as ColumnMaskPolicy)}
+          title="Rewrites values in the result grid, export, and charts. Joins still use the clear column."
+        >
+          <option value="NONE">None</option>
+          <option value="FULL">Full (****)</option>
+          <option value="PARTIAL">Partial (keep last)</option>
+          <option value="HASH">Hash</option>
+        </select>
+        {maskPolicy === "PARTIAL" ? (
+          <input
+            type="number"
+            min={1}
+            max={64}
+            className="srse-input"
+            style={{ width: 64, marginTop: "0.35rem" }}
+            aria-label="Keep last characters"
+            value={maskKeepLast}
+            onChange={(e) => setMaskKeepLast(Math.max(1, Number.parseInt(e.target.value, 10) || 4))}
+          />
+        ) : null}
+      </td>
+      <td>
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
           <button type="button" className="srse-btn srse-btn-sm" disabled={!dirty || saving} onClick={onSave}>
             {saving ? "Saving…" : "Save"}
@@ -590,6 +624,12 @@ function ColumnMetadataRowEditor({
             }
             onError={setError}
           />
+          <a
+            className="srse-btn srse-btn-sm"
+            href={`/admin456?section=lineage&table=${encodeURIComponent(`${row.catalog}.${row.schema}.${row.table}`)}&column=${encodeURIComponent(row.column)}`}
+          >
+            View lineage
+          </a>
           {error && <span className="srse-text-danger">{error}</span>}
         </div>
       </td>
@@ -791,6 +831,7 @@ export function ColumnMetadataPanel({
                 <th>Compare as</th>
                 <th>Value list</th>
                 <th>Visible</th>
+                <th>Mask</th>
                 <th />
               </tr>
             </thead>
@@ -980,6 +1021,12 @@ function RegistrationRow({
                 Edit
               </button>
               <TableScopeBindingEditor registration={registration} onSaved={onChanged} />
+              <a
+                className="srse-btn srse-btn-ghost srse-btn-sm"
+                href={`/admin456?section=lineage&table=${encodeURIComponent(registration.qualifiedName)}`}
+              >
+                View lineage
+              </a>
               <ConfirmDeleteButton
                 idleLabel="Delete"
                 confirmLabel="Yes, unregister"

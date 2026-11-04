@@ -64,6 +64,14 @@ const ICON_PATHS: Record<AdminSectionId, ReactNode> = {
       <path d="M15 3.5V8h4.5M11 12.5h5M11 16.5h5" />
     </>
   ),
+  lineage: (
+    <>
+      <circle cx="6" cy="6" r="2.5" />
+      <circle cx="18" cy="6" r="2.5" />
+      <circle cx="12" cy="18" r="2.5" />
+      <path d="M8 7.5 L10.5 15.5M16 7.5 L13.5 15.5M8.5 6h7" />
+    </>
+  ),
   otp: (
     <>
       <circle cx="8" cy="14" r="3" />

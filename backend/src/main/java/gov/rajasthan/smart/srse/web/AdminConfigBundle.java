@@ -2,6 +2,7 @@ package gov.rajasthan.smart.srse.web;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import gov.rajasthan.smart.srse.compiler.CompareAs;
+import gov.rajasthan.smart.srse.metadata.ColumnMaskPolicy;
 
 import java.time.Instant;
 import java.util.List;
@@ -48,12 +49,21 @@ public record AdminConfigBundle(
             boolean fuzzyMatchable,
             boolean visible,
             CompareAs compareAs,
-            Boolean valuePickerEnabled) {
+            Boolean valuePickerEnabled,
+            ColumnMaskPolicy maskPolicy,
+            Integer maskKeepLast) {
         /** Bundles written before the value-picker flag existed: absent means "leave what is stored". */
         public AnalysisColumnMetadataEntry(
                 String catalog, String schema, String table, String column, String businessName,
                 boolean fuzzyMatchable, boolean visible, CompareAs compareAs) {
-            this(catalog, schema, table, column, businessName, fuzzyMatchable, visible, compareAs, null);
+            this(catalog, schema, table, column, businessName, fuzzyMatchable, visible, compareAs, null, null, null);
+        }
+
+        public AnalysisColumnMetadataEntry(
+                String catalog, String schema, String table, String column, String businessName,
+                boolean fuzzyMatchable, boolean visible, CompareAs compareAs, Boolean valuePickerEnabled) {
+            this(catalog, schema, table, column, businessName, fuzzyMatchable, visible, compareAs,
+                    valuePickerEnabled, null, null);
         }
     }
 }

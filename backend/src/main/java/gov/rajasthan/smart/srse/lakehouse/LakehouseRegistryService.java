@@ -8,6 +8,7 @@ import gov.rajasthan.smart.srse.datasource.ExternalDataSourceService;
 import gov.rajasthan.smart.srse.datasource.ExternalDataSourceType;
 import gov.rajasthan.smart.srse.metadata.AnalysisColumnMetadata;
 import gov.rajasthan.smart.srse.metadata.AnalysisColumnMetadataRepository;
+import gov.rajasthan.smart.srse.metadata.ColumnMaskPolicy;
 import gov.rajasthan.smart.srse.metadata.sync.MetadataSnapshotService;
 import gov.rajasthan.smart.srse.metadata.sync.MetadataSyncService;
 import org.springframework.stereotype.Service;
@@ -738,7 +739,9 @@ public class LakehouseRegistryService {
                             meta != null ? meta.getBusinessName() : null,
                             meta != null && meta.isFuzzyMatchable(),
                             meta == null || meta.isVisible(),
-                            meta != null && meta.isValuePickerEnabled());
+                            meta != null && meta.isValuePickerEnabled(),
+                            meta != null ? meta.getMaskPolicy() : ColumnMaskPolicy.NONE,
+                            meta != null ? meta.getMaskKeepLast() : 4);
                 })
                 .filter(RegisteredColumn::visible)
                 .toList();
@@ -763,11 +766,18 @@ public class LakehouseRegistryService {
      *                on it; always {@code true} in what those methods return.
      */
     public record RegisteredColumn(String name, String dataType, String businessName,
-                                   boolean fuzzyMatchable, boolean visible, boolean valuePickerEnabled) {
-        /** Picker off — what every column is until an admin enables it. */
+                                   boolean fuzzyMatchable, boolean visible, boolean valuePickerEnabled,
+                                   ColumnMaskPolicy maskPolicy, int maskKeepLast) {
+        /** Picker off / no mask — what every column is until an admin enables either. */
         public RegisteredColumn(String name, String dataType, String businessName,
                                 boolean fuzzyMatchable, boolean visible) {
-            this(name, dataType, businessName, fuzzyMatchable, visible, false);
+            this(name, dataType, businessName, fuzzyMatchable, visible, false, ColumnMaskPolicy.NONE, 4);
+        }
+
+        public RegisteredColumn(String name, String dataType, String businessName,
+                                boolean fuzzyMatchable, boolean visible, boolean valuePickerEnabled) {
+            this(name, dataType, businessName, fuzzyMatchable, visible, valuePickerEnabled,
+                    ColumnMaskPolicy.NONE, 4);
         }
     }
 

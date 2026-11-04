@@ -66,6 +66,12 @@ public class AnalysisColumnMetadataController {
         entity.setValuePickerEnabled(req.valuePickerEnabled() != null
                 ? req.valuePickerEnabled()
                 : existing.map(AnalysisColumnMetadata::isValuePickerEnabled).orElse(false));
+        entity.setMaskPolicy(req.maskPolicy() != null
+                ? req.maskPolicy()
+                : existing.map(AnalysisColumnMetadata::getMaskPolicy).orElse(ColumnMaskPolicy.NONE));
+        entity.setMaskKeepLast(req.maskKeepLast() != null
+                ? req.maskKeepLast()
+                : existing.map(AnalysisColumnMetadata::getMaskKeepLast).orElse(4));
         return ColumnMetadataResponse.from(repository.save(entity));
     }
 
@@ -89,11 +95,19 @@ public class AnalysisColumnMetadataController {
 
     public record UpsertColumnMetadataRequest(String catalog, String schema, String table, String column,
                                               String businessName, boolean fuzzyMatchable, Boolean visible,
-                                              CompareAs compareAs, Boolean valuePickerEnabled) {
+                                              CompareAs compareAs, Boolean valuePickerEnabled,
+                                              ColumnMaskPolicy maskPolicy, Integer maskKeepLast) {
         public UpsertColumnMetadataRequest(String catalog, String schema, String table, String column,
                                            String businessName, boolean fuzzyMatchable, Boolean visible,
                                            CompareAs compareAs) {
-            this(catalog, schema, table, column, businessName, fuzzyMatchable, visible, compareAs, null);
+            this(catalog, schema, table, column, businessName, fuzzyMatchable, visible, compareAs, null, null, null);
+        }
+
+        public UpsertColumnMetadataRequest(String catalog, String schema, String table, String column,
+                                           String businessName, boolean fuzzyMatchable, Boolean visible,
+                                           CompareAs compareAs, Boolean valuePickerEnabled) {
+            this(catalog, schema, table, column, businessName, fuzzyMatchable, visible, compareAs,
+                    valuePickerEnabled, null, null);
         }
 
         /**
@@ -109,13 +123,14 @@ public class AnalysisColumnMetadataController {
 
     public record ColumnMetadataResponse(String catalog, String schema, String table, String column,
                                          String businessName, boolean fuzzyMatchable, boolean visible,
-                                         CompareAs compareAs, boolean valuePickerEnabled) {
+                                         CompareAs compareAs, boolean valuePickerEnabled,
+                                         ColumnMaskPolicy maskPolicy, int maskKeepLast) {
         static ColumnMetadataResponse from(AnalysisColumnMetadata entity) {
             return new ColumnMetadataResponse(
                     entity.getCatalogName(), entity.getSchemaName(), entity.getTableName(),
                     entity.getColumnName(), entity.getBusinessName(),
                     entity.isFuzzyMatchable(), entity.isVisible(), entity.getCompareAs(),
-                    entity.isValuePickerEnabled());
+                    entity.isValuePickerEnabled(), entity.getMaskPolicy(), entity.getMaskKeepLast());
         }
     }
 }

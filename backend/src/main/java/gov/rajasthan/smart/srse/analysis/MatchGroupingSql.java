@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.StringJoiner;
+import java.util.function.BiFunction;
 
 /** Emits and validates GROUP BY / aggregate SELECT for grouped matches (§5.5 / AA-14). */
 final class MatchGroupingSql {
@@ -161,6 +162,22 @@ final class MatchGroupingSql {
             QualifiedTable sourceTable,
             QualifiedTable targetTable,
             Map<String, SqlTypeFamily> aggregateTypes) {
+        appendGroupedSelect(select, outerColumns, req, sourceTable, targetTable, aggregateTypes,
+                (col, ref) -> ref);
+    }
+
+    /**
+     * @param maskColumnRef maps a group column and its {@code side.column} ref to the
+     *                      expression used in both SELECT and GROUP BY (masking must match).
+     */
+    static void appendGroupedSelect(
+            StringBuilder select,
+            Set<String> outerColumns,
+            RecordMatchRequest req,
+            QualifiedTable sourceTable,
+            QualifiedTable targetTable,
+            Map<String, SqlTypeFamily> aggregateTypes,
+            BiFunction<DisplayColumn, String, String> maskColumnRef) {
         boolean first = true;
         for (DisplayColumn g : req.groupByColumns()) {
             if (!first) {
@@ -169,7 +186,7 @@ final class MatchGroupingSql {
             first = false;
             String side = sideAlias(g.qualifiedTable(), sourceTable, targetTable);
             String outAlias = allocateUniqueAlias(groupKeyAlias(g, side), outerColumns);
-            String expr = side + "." + g.column();
+            String expr = maskColumnRef.apply(g, side + "." + g.column());
             select.append("COALESCE(CAST(").append(expr).append(" AS VARCHAR), '")
                     .append(NULL_GROUP_LABEL).append("') AS \"").append(outAlias).append("\"");
         }
@@ -203,13 +220,21 @@ final class MatchGroupingSql {
 
     static String groupByClause(
             RecordMatchRequest req, QualifiedTable sourceTable, QualifiedTable targetTable) {
+        return groupByClause(req, sourceTable, targetTable, (col, ref) -> ref);
+    }
+
+    static String groupByClause(
+            RecordMatchRequest req,
+            QualifiedTable sourceTable,
+            QualifiedTable targetTable,
+            BiFunction<DisplayColumn, String, String> maskColumnRef) {
         if (req.groupByColumns().isEmpty()) {
             return "";
         }
         StringJoiner joiner = new StringJoiner(", ");
         for (DisplayColumn g : req.groupByColumns()) {
             String side = sideAlias(g.qualifiedTable(), sourceTable, targetTable);
-            joiner.add(side + "." + g.column());
+            joiner.add(maskColumnRef.apply(g, side + "." + g.column()));
         }
         return joiner.toString();
     }

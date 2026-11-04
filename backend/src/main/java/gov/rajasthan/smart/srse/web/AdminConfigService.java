@@ -10,6 +10,7 @@ import gov.rajasthan.smart.srse.lakehouse.QualifiedColumn;
 import gov.rajasthan.smart.srse.lakehouse.RegisteredTableRepository;
 import gov.rajasthan.smart.srse.metadata.AnalysisColumnMetadata;
 import gov.rajasthan.smart.srse.metadata.AnalysisColumnMetadataRepository;
+import gov.rajasthan.smart.srse.metadata.ColumnMaskPolicy;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -215,6 +216,12 @@ public class AdminConfigService {
         entity.setValuePickerEnabled(entry.valuePickerEnabled() != null
                 ? entry.valuePickerEnabled()
                 : existing.map(AnalysisColumnMetadata::isValuePickerEnabled).orElse(false));
+        entity.setMaskPolicy(entry.maskPolicy() != null
+                ? entry.maskPolicy()
+                : existing.map(AnalysisColumnMetadata::getMaskPolicy).orElse(ColumnMaskPolicy.NONE));
+        entity.setMaskKeepLast(entry.maskKeepLast() != null
+                ? entry.maskKeepLast()
+                : existing.map(AnalysisColumnMetadata::getMaskKeepLast).orElse(4));
         columnMetadataRepository.save(entity);
     }
 
@@ -228,7 +235,9 @@ public class AdminConfigService {
                 entity.isFuzzyMatchable(),
                 entity.isVisible(),
                 entity.getCompareAs(),
-                entity.isValuePickerEnabled());
+                entity.isValuePickerEnabled(),
+                entity.getMaskPolicy(),
+                entity.getMaskKeepLast());
     }
 
     private static AdminConfigBundle.ConnectionPlane planeFromOverrides(

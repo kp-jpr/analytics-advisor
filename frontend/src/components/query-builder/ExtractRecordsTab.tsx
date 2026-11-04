@@ -148,6 +148,7 @@ export function AttributeMultiSelect({
         <div className="attr-multi-select-list">
           {columns.map((column) => {
             const caption = column.businessName ?? column.name;
+            const masked = Boolean(column.maskPolicy && column.maskPolicy !== "NONE");
             return (
               <label key={column.name} className="checkbox-row attr-multi-select-option">
                 <input
@@ -157,6 +158,11 @@ export function AttributeMultiSelect({
                   onChange={() => onChange(toggleDisplayColumnSelection(selected, column.name))}
                 />
                 {caption}
+                {masked ? (
+                  <span className="srse-text-muted" style={{ marginLeft: "0.35rem", fontSize: "0.75rem" }} title="Values are masked in results, export, and charts">
+                    (Masked)
+                  </span>
+                ) : null}
               </label>
             );
           })}

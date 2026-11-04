@@ -22,6 +22,7 @@ import {
   MetadataSnapshotAdminPanel,
 } from "@/components/admin/lakehouseAdminPanels";
 import { AuditLogPanel } from "@/components/AuditLogPanel";
+import { LineagePanel } from "@/components/admin/LineagePanel";
 import { OtpGatewayPanel } from "@/components/OtpGatewayPanel";
 import { useAuthSession } from "@/components/shell/AuthSessionProvider";
 import { listColumnMetadata, type ColumnMetadata } from "@/lib/analysisApi";
@@ -157,6 +158,14 @@ export function AdminWorkspace() {
         {section === "audit" && session.auditReader ? (
           <section className="srse-card">
             <AuditLogPanel />
+          </section>
+        ) : null}
+        {section === "lineage" && session.auditReader ? (
+          <section className="srse-card">
+            <LineagePanel
+              initialTable={searchParams.get("table") ?? undefined}
+              initialColumn={searchParams.get("column") ?? undefined}
+            />
           </section>
         ) : null}
         {section === "otp" && session.superAdmin ? <OtpGatewayPanel /> : null}
