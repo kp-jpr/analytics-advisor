@@ -46,7 +46,7 @@ export async function listLineageEvents(params: {
   if (params.column) q.set("column", params.column);
   if (params.savedQueryId != null) q.set("savedQueryId", String(params.savedQueryId));
   if (params.limit != null) q.set("limit", String(params.limit));
-  const res = await authorizedFetch(`${API_BASE}/api/admin/lineage/events?${q}`, { credentials: "include" }, "admin");
+  const res = await authorizedFetch("admin", `${API_BASE}/api/admin/lineage/events?${q}`, { credentials: "include" });
   if (!res.ok) {
     throw new Error(`Lineage service error ${res.status}: ${await readApiErrorMessage(res)}`);
   }
@@ -54,7 +54,7 @@ export async function listLineageEvents(params: {
 }
 
 export async function fetchLineageEventGraph(id: number): Promise<LineageGraphView> {
-  const res = await authorizedFetch(`${API_BASE}/api/admin/lineage/events/${id}`, { credentials: "include" }, "admin");
+  const res = await authorizedFetch("admin", `${API_BASE}/api/admin/lineage/events/${id}`, { credentials: "include" });
   if (!res.ok) {
     throw new Error(`Lineage service error ${res.status}: ${await readApiErrorMessage(res)}`);
   }
@@ -72,7 +72,7 @@ export async function fetchLineageGraph(params: {
   if (params.column) q.set("column", params.column);
   if (params.actor) q.set("actor", params.actor);
   if (params.limit != null) q.set("limit", String(params.limit));
-  const res = await authorizedFetch(`${API_BASE}/api/admin/lineage/graph?${q}`, { credentials: "include" }, "admin");
+  const res = await authorizedFetch("admin", `${API_BASE}/api/admin/lineage/graph?${q}`, { credentials: "include" });
   if (!res.ok) {
     throw new Error(`Lineage service error ${res.status}: ${await readApiErrorMessage(res)}`);
   }

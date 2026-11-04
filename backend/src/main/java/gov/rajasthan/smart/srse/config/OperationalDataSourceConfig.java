@@ -42,7 +42,8 @@ import java.util.Map;
                 "gov.rajasthan.smart.srse.otp",
                 "gov.rajasthan.smart.srse.audit",
                 "gov.rajasthan.smart.srse.savedquery",
-                "gov.rajasthan.smart.srse.datasource"
+                "gov.rajasthan.smart.srse.datasource",
+                "gov.rajasthan.smart.srse.lineage"
         },
         entityManagerFactoryRef = "operationalEmf",
         transactionManagerRef = "operationalTx"
@@ -73,7 +74,8 @@ public class OperationalDataSourceConfig {
             "gov.rajasthan.smart.srse.otp",
             "gov.rajasthan.smart.srse.audit",
             "gov.rajasthan.smart.srse.savedquery",
-            "gov.rajasthan.smart.srse.datasource"
+            "gov.rajasthan.smart.srse.datasource",
+            "gov.rajasthan.smart.srse.lineage"
     };
 
     @Bean
